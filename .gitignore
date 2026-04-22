@@ -1,0 +1,21 @@
+# Large downloaded datasets and derived data
+data/raw/
+data/processed/
+
+# Notebook caches
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Common build and editor files
+.DS_Store
+Thumbs.db
+.vscode/
