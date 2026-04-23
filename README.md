@@ -68,15 +68,69 @@ Files Updated:
 python src/train.py
 ```
 
+### Step 7: Training Stability & Runtime Fixes
+
+Baseline training script ko update kiya gaya taake woh different working directories se reliably run ho sake aur runtime issues avoid hon.
+
+Key improvements:
+
+- Project-root based path resolution add ki gayi (`resolve_project_path`) for CSV/image loading.
+- Checkpoint save path ko absolute project path par shift kiya gaya.
+- `results/checkpoints/` directory auto-create karne ke liye `os.makedirs(..., exist_ok=True)` add kiya gaya.
+- Mixed precision training ko new PyTorch AMP API par migrate kiya gaya (`torch.amp.autocast`, `torch.amp.GradScaler`).
+- Gradient accumulation (`accum_steps=4`) add ki gayi to reduce GPU memory pressure.
+
+Files Updated:
+
+- `src/train.py`
+
+Command Run:
+
+```bash
+python src/train.py
+```
+
+Observed:
+
+- Training successfully start hui on CUDA.
+- Epoch 1 validation QWK ~ `0.7998` observe hua.
+
+### Step 8: Evaluation Pipeline Added
+
+Model evaluation ke liye separate script add/update ki gayi jo test split par inference run karti hai aur detailed metrics report karti hai.
+
+What evaluation does:
+
+- Best checkpoint load karta hai (`results/checkpoints/best_baseline.pth`).
+- Test split par predictions generate karta hai.
+- Accuracy + QWK compute karta hai.
+- Classification report print karta hai (class-wise precision/recall/F1).
+- Confusion matrix plot karke save karta hai.
+
+Files Updated:
+
+- `src/evaluate.py`
+
+Command Run:
+
+```bash
+python src/evaluate.py
+```
+
+Artifacts:
+
+- Checkpoint: `results/checkpoints/best_baseline.pth`
+- Confusion Matrix Figure: `results/figures/confusion_matrix_baseline.png`
+
 ## Current Status & Next Steps
 
 ### In Progress
 
-Baseline training (`EfficientNet-B0` with standard Cross-Entropy) chal rahi hai.
+Baseline training + evaluation pipeline functional hai. Team ab class imbalance mitigation aur QWK optimization phase mein hai.
 
 ### Next Target
 
-Baseline QWK score evaluate karne ke baad severe class imbalance handle karne ke liye `src/losses.py` mein Weighted Cross-Entropy, Focal Loss, ya Ordinal Regression loss implement kiya jayega. Target Quadratic Weighted Kappa (QWK) `> 0.82` achieve karna hai.
+Ab next iteration mein severe class imbalance handle karne ke liye `src/losses.py` mein Weighted Cross-Entropy, Focal Loss, ya Ordinal Regression loss implement kiya jayega. Saath hi threshold tuning / ensembling evaluate ki jayegi. Target Quadratic Weighted Kappa (QWK) `> 0.82` achieve karna hai.
 
 ## Collaboration Note
 
