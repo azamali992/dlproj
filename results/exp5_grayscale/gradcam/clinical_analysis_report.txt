@@ -1,0 +1,42 @@
+GRAD-CAM CLINICAL ANALYSIS REPORT
+===================================
+Experiment: Exp5: ResNet18 + CE + Grayscale
+Reference: Selvaraju et al. (2017) "Grad-CAM: Visual Explanations from Deep Networks" ICCV
+
+CLINICAL FEATURE ALIGNMENT ANALYSIS
+------------------------------------
+
+Grade 0 (No DR):
+  Expected: Uniform/diffuse attention across healthy retina
+  Observed: [FILL IN after viewing heatmaps]
+  Alignment: [Does model focus match clinical expectation? YES/NO/PARTIAL]
+
+Grade 1 (Mild NPDR):
+  Expected: Focus on microaneurysms (tiny red dots, often near macula)
+  Observed: [FILL IN]
+  Alignment: [YES/NO/PARTIAL]
+
+Grade 2 (Moderate NPDR):
+  Expected: Focus on hemorrhages (red blotches) and hard exudates (yellow spots)
+  Observed: [FILL IN]
+  Alignment: [YES/NO/PARTIAL]
+
+Grade 3 (Severe NPDR):
+  Expected: Widespread attention on cotton wool spots, extensive hemorrhages
+  Observed: [FILL IN]
+  Alignment: [YES/NO/PARTIAL]
+
+Grade 4 (Proliferative DR):
+  Expected: Focus on neovascularization (abnormal vessel growth), often near optic disc
+  Observed: [FILL IN]
+  Alignment: [YES/NO/PARTIAL]
+
+SUMMARY
+-------
+[Does the model generally attend to clinically relevant features?]
+[Which grades show the strongest clinical alignment?]
+[Any concerns about model attention patterns?]
+[How does this model compare to baseline for clinical interpretability?]
+
+NOTE: This analysis follows the methodology of Quellec et al. (2019)
+who showed kappa=0.76 agreement between Grad-CAM and ophthalmologist annotations.

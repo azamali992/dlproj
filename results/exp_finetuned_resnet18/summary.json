@@ -1,0 +1,52 @@
+{
+  "model": "ResNet18 Fine-Tuned",
+  "approach": "Freeze backbone, train only classifier",
+  "best_epoch": 25,
+  "best_qwk": 0.8235503148499114,
+  "best_val_loss": 0.6599272696868234,
+  "best_val_acc": 76.12551159618008,
+  "total_params": 11441733,
+  "trainable_params": 265221,
+  "frozen_params": 11176512,
+  "config": {
+    "model_name": "resnet18_finetuned",
+    "num_classes": 5,
+    "input_size": 224,
+    "batch_size": 16,
+    "num_epochs": 30,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "device": "cuda",
+    "data_dir": "./data/raw",
+    "output_dir": "./results/exp_finetuned_resnet18",
+    "gradcam_samples_per_grade": 3,
+    "resume_from_checkpoint": true
+  },
+  "per_class_metrics": {
+    "0": {
+      "precision": 0.9429347826086957,
+      "recall": 0.961218836565097,
+      "f1-score": 0.9519890260631001
+    },
+    "1": {
+      "precision": 0.5,
+      "recall": 0.04054054054054054,
+      "f1-score": 0.075
+    },
+    "2": {
+      "precision": 0.5696969696969697,
+      "recall": 0.94,
+      "f1-score": 0.7094339622641509
+    },
+    "3": {
+      "precision": 0.6363636363636364,
+      "recall": 0.1794871794871795,
+      "f1-score": 0.28
+    },
+    "4": {
+      "precision": 0.7222222222222222,
+      "recall": 0.22033898305084745,
+      "f1-score": 0.33766233766233766
+    }
+  }
+}

@@ -42,13 +42,14 @@ CONFIG = {
     'num_classes': 5,
     'input_size': 224,
     'batch_size': 16,
-    'num_epochs': 15,
+    'num_epochs': 30,
     'learning_rate': 0.001,
     'weight_decay': 1e-4,
-    'device': 'cuda' if torch.cuda.is_available() else 'cpu',
+    'device': 'cuda',
     'data_dir': './data/raw',
     'output_dir': './results/exp_finetuned_resnet18',
-    'gradcam_samples_per_grade': 3,  # Show 3 samples per grade
+    'gradcam_samples_per_grade': 3,
+    'resume_from_checkpoint': True,  # Show 3 samples per grade
 }
 
 os.makedirs(CONFIG['output_dir'], exist_ok=True)
@@ -119,65 +120,7 @@ class ResNet18FineTuned(nn.Module):
             self.backbone.layer2(self.backbone.layer1(self.backbone.relu(
                 self.backbone.bn1(self.backbone.conv1(x))))))))
 
-# ============================================================================
-# GRAD-CAM
-# ============================================================================
-class GradCAM:
-    def __init__(self, model, target_layer):
-        self.model = model
-        self.target_layer = target_layer
-        self.gradients = None
-        self.activations = None
-        self.hook_handles = []
-        self._register_hooks()
-    
-    def _register_hooks(self):
-        def forward_hook(module, input, output):
-            self.activations = output.detach()
-        
-        def backward_hook(module, grad_input, grad_output):
-            self.gradients = grad_output[0].detach()
-        
-        # Register hooks on target layer
-        forward_handle = self.target_layer.register_forward_hook(forward_hook)
-        backward_handle = self.target_layer.register_backward_hook(backward_hook)
-        self.hook_handles.append(forward_handle)
-        self.hook_handles.append(backward_handle)
-    
-    def generate(self, input_tensor, target_class):
-        """Generate Grad-CAM heatmap"""
-        self.model.eval()
-        
-        # Forward pass
-        output = self.model(input_tensor)
-        
-        # Zero gradients
-        self.model.zero_grad()
-        
-        # Backward pass for target class
-        target_score = output[0, target_class]
-        target_score.backward()
-        
-        # Compute Grad-CAM
-        gradients = self.gradients[0].cpu().numpy()  # [C, H, W]
-        activations = self.activations[0].cpu().numpy()  # [C, H, W]
-        
-        # Global average pooling of gradients
-        weights = np.mean(gradients, axis=(1, 2))  # [C]
-        cam = np.zeros(activations.shape[1:], dtype=np.float32)  # [H, W]
-        
-        for i, w in enumerate(weights):
-            cam += w * activations[i, :, :]
-        
-        # ReLU to keep only positive contributions
-        cam = np.maximum(cam, 0)
-        cam = cam / (cam.max() + 1e-8)
-        
-        return cam
-    
-    def remove_hooks(self):
-        for handle in self.hook_handles:
-            handle.remove()
+
 
 # ============================================================================
 # TRAINING LOOP
@@ -510,6 +453,46 @@ CONCLUSION
     print("3. Check if it matches expected clinical features for each grade")
     print("4. Edit clinical_analysis_report.txt with your observations")
 
+
+def load_checkpoint(checkpoint_path, model, optimizer, device):
+    """Load checkpoint and return starting epoch + previous state"""
+    print(f"\n{'='*80}")
+    print(f"RESUMING FROM CHECKPOINT")
+    print(f"{'='*80}")
+    print(f"Loading checkpoint from: {checkpoint_path}")
+    
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    model.load_state_dict(checkpoint['model_state'])
+    optimizer.load_state_dict(checkpoint['optimizer_state'])
+    
+    start_epoch = checkpoint['epoch']
+    history = checkpoint['history']
+    best_qwk = checkpoint['best_qwk']
+    best_epoch = checkpoint['best_epoch']
+    best_preds = checkpoint['best_preds']
+    best_labels = checkpoint['best_labels']
+    
+    print(f"✓ Resumed from epoch {start_epoch + 1}")
+    print(f"✓ Previous best QWK: {best_qwk:.4f} (at epoch {best_epoch + 1})")
+    print(f"{'='*80}\n")
+    
+    return start_epoch, history, best_qwk, best_epoch, best_preds, best_labels
+
+def save_checkpoint(checkpoint_path, epoch, model, optimizer, history, 
+                    best_qwk, best_epoch, best_preds, best_labels):
+    """Save checkpoint for resuming later"""
+    checkpoint = {
+        'epoch': epoch,
+        'model_state': model.state_dict(),
+        'optimizer_state': optimizer.state_dict(),
+        'history': history,
+        'best_qwk': best_qwk,
+        'best_epoch': best_epoch,
+        'best_preds': best_preds,
+        'best_labels': best_labels,
+    }
+    torch.save(checkpoint, checkpoint_path)
 # ============================================================================
 # MAIN TRAINING
 # ============================================================================
@@ -605,21 +588,37 @@ def main():
     )
     
     # Training loop
-    print("\n" + "="*80)
-    print("TRAINING STARTED")
-    print("="*80)
-    
-    history = {
-        'train_loss': [], 'train_acc': [],
-        'val_loss': [], 'val_acc': [], 'val_qwk': []
-    }
-    
+# ← ADD CHECKPOINT LOADING CODE HERE
+    start_epoch = 0
+    history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': [], 'val_qwk': []}
     best_qwk = 0
     best_epoch = 0
     best_preds = None
     best_labels = None
     
-    for epoch in range(CONFIG['num_epochs']):
+    checkpoint_path = os.path.join(CONFIG['output_dir'], 'checkpoint.pth')
+    
+    if CONFIG['resume_from_checkpoint'] and os.path.exists(checkpoint_path):
+        start_epoch, history, best_qwk, best_epoch, best_preds, best_labels = \
+            load_checkpoint(checkpoint_path, model, optimizer, CONFIG['device'])
+    else:
+        if CONFIG['resume_from_checkpoint']:
+            print("\n" + "="*80)
+            print("NO CHECKPOINT FOUND - STARTING FROM SCRATCH")
+            print("="*80 + "\n")
+        else:
+            print("\n" + "="*80)
+            print("CHECKPOINT/RESUME DISABLED - STARTING FROM SCRATCH")
+            print("="*80 + "\n")
+    
+    # Training loop
+    print("="*80)
+    print("TRAINING STARTED")
+    print("="*80)
+    
+    for epoch in range(start_epoch, CONFIG['num_epochs']):  # ← CHANGE: range(start_epoch, ...)
+    
+
         train_loss, train_acc = train_epoch(
             model, train_loader, criterion, optimizer,
             CONFIG['device'], epoch, CONFIG['num_epochs']
@@ -647,6 +646,11 @@ def main():
             best_labels = val_labels
             torch.save(model.state_dict(), os.path.join(CONFIG['output_dir'], 'best_model.pth'))
             print(f"  ✓ Best model saved! (QWK: {val_qwk:.4f})")
+        
+        # ← ADD THIS: Save checkpoint every epoch for resume capability
+        save_checkpoint(checkpoint_path, epoch, model, optimizer, history,
+                       best_qwk, best_epoch, best_preds, best_labels)
+        print(f"  💾 Checkpoint saved for resuming")
         
         scheduler.step(val_qwk)
     
@@ -753,14 +757,7 @@ def main():
         json.dump(summary, f, indent=2)
     print(f"✓ Saved: summary.json")
     
-    # ====================================================================
-    # GRAD-CAM ANALYSIS
-    # ====================================================================
-    generate_gradcam_analysis(
-        model, val_dataset, val_df, CONFIG['device'], 
-        CONFIG['output_dir'],
-        num_samples_per_grade=CONFIG['gradcam_samples_per_grade']
-    )
+  
     
     # ====================================================================
     # FINAL SUMMARY
@@ -791,6 +788,16 @@ def main():
         metrics = class_report.get(f"Grade {i}", class_report.get(str(i), {}))
         recall = metrics.get('recall', 0.0)
         print(f"  Grade {i} Recall: {recall:.2%}")
+
+
+        # ← ADD THIS: Clean up checkpoint after successful completion
+    if os.path.exists(checkpoint_path):
+        os.remove(checkpoint_path)
+        print(f"✓ Cleanup: Removed checkpoint.pth (training complete)")
+    
+    print(f"\n✨ NOTE: Checkpoint/Resume enabled!")
+    print(f"   If training is interrupted, simply re-run this script.")
+    print(f"   It will automatically resume from the last saved checkpoint.")
 
 if __name__ == '__main__':
     main()

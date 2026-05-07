@@ -1,9 +1,0 @@
-Experiment: Exp5: ResNet18 + CE + Grayscale
-Model: ResNet18 (pretrained)
-Loss: CrossEntropyLoss
-Preprocessing: Grayscale (3-ch) + Resize + Normalize
-Augmentation: None
-Image Size: 224
-Batch Size: 16
-LR: 0.0001
-Best QWK: 0.8690
