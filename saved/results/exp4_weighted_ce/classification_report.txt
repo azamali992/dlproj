@@ -1,0 +1,18 @@
+Exp4: ResNet18 + Weighted CE
+
+Best QWK: 0.8666
+Accuracy: 0.8145
+
+Class weights: [0.21569476 1.0522406  0.3898163  2.0224886  1.3197595 ]
+
+              precision    recall  f1-score   support
+
+     Grade 0     0.9586    0.9612    0.9599       361
+     Grade 1     0.5636    0.4189    0.4806        74
+     Grade 2     0.7364    0.8800    0.8018       200
+     Grade 3     0.4500    0.4615    0.4557        39
+     Grade 4     0.6757    0.4237    0.5208        59
+
+    accuracy                         0.8145       733
+   macro avg     0.6769    0.6291    0.6438       733
+weighted avg     0.8082    0.8145    0.8062       733
