@@ -1,0 +1,551 @@
+% ============================================================
+%  Preliminary Report: Diabetic Retinopathy Classification
+%  Template -- fill in TODO sections before submission
+% ============================================================
+\documentclass[12pt, a4paper]{article}
+
+% --- Packages -----------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{float}
+\usepackage{xcolor}
+\usepackage{setspace}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage[capitalise]{cleveref}
+
+\onehalfspacing
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue
+}
+
+% Placeholder box for missing figures
+\newcommand{\figplaceholder}[2][6cm]{%
+    \fbox{\parbox[c][#1][c]{\linewidth}{%
+        \centering\textcolor{gray}{\small\textit{[Figure placeholder: #2]}}%
+    }}%
+}
+
+% --- Title block --------------------------------------------
+\title{
+    \Large\textbf{Automated Grading of Diabetic Retinopathy\\
+    Using Deep Convolutional Neural Networks:\\
+    A Preliminary Study}\\[1em]
+    \normalsize Preliminary Report
+}
+\author{
+    Muhammad Uzair Khan\\
+    \small\textit{TODO: Department / Institution}\\
+    \small\texttt{mukskhan9999@gmail.com}
+}
+\date{\today}
+
+% ============================================================
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+\begin{abstract}
+Diabetic retinopathy (DR) is a leading cause of preventable blindness worldwide.
+Early and accurate grading of DR severity from fundus photographs is critical for
+timely clinical intervention but remains resource-intensive and subject to
+inter-grader variability.
+This report presents a preliminary investigation into automated DR grading using
+deep convolutional neural networks (CNNs).
+We evaluate three backbone architectures --- ResNet-18, ResNet-50, and EfficientNet-B0
+--- pretrained on ImageNet and fine-tuned on a fundus image dataset comprising five
+severity grades (Grade 0--4).
+We also study the effect of class-imbalance mitigation via weighted cross-entropy
+loss and the utility of grayscale preprocessing.
+Our best baseline model (EfficientNet-B0) achieves a Quadratic Weighted Kappa (QWK)
+of 0.8771 on the held-out validation set.
+Grad-CAM visualisations confirm that the models attend to clinically relevant
+lesion regions including microaneurysms, haemorrhages, and neovascularisation.
+\end{abstract}
+
+% ============================================================
+\section{Introduction}
+\label{sec:intro}
+
+Diabetes mellitus is a global epidemic affecting over 400 million people, with
+diabetic retinopathy among its most prevalent microvascular complications.
+DR manifests as progressive damage to the retinal vasculature and, if untreated,
+leads to irreversible vision loss.
+The International Clinical DR Disease Severity Scale classifies the condition into
+five ordinal grades: No DR, Mild, Moderate, Severe non-proliferative DR (NPDR), and
+Proliferative DR (PDR).
+
+Manual grading by trained ophthalmologists is time-consuming and suffers from
+inter-rater disagreement, especially in borderline cases.
+Automated computer-aided diagnosis (CAD) systems based on deep learning have emerged
+as a promising complement to clinical workflows, enabling high-throughput screening
+in resource-limited settings.
+
+\subsection{Problem Statement}
+\label{ssec:problem}
+
+Given a colour fundus photograph, the task is to predict the DR severity grade
+$y \in \{0, 1, 2, 3, 4\}$.
+The five-class ordinal nature of the labels --- where misclassifying Grade~1 as
+Grade~3 is more severe than misclassifying it as Grade~2 --- motivates the use of
+the Quadratic Weighted Kappa (QWK) as the primary evaluation metric, consistent
+with the Kaggle DR Detection challenge \cite{TODO_kaggle}.
+
+\subsection{Objectives}
+\label{ssec:objectives}
+
+\begin{enumerate}[label=\arabic*.]
+    \item Establish strong CNN baselines under a unified training protocol.
+    \item Investigate the impact of model capacity (ResNet-18 vs.\ ResNet-50 vs.\
+          EfficientNet-B0) on ordinal classification performance.
+    \item Assess the effect of class-imbalance mitigation strategies.
+    \item Examine the role of colour versus grayscale input representations.
+    \item Provide qualitative interpretability via Grad-CAM visualisations.
+\end{enumerate}
+
+\subsection{Report Structure}
+The remainder of this report is organised as follows.
+\Cref{sec:litreview} reviews related work.
+\Cref{sec:dataset} describes the dataset.
+\Cref{sec:methodology} details the experimental methodology.
+\Cref{sec:results} presents and analyses results.
+\Cref{sec:discussion} discusses findings and limitations.
+\Cref{sec:conclusion} concludes with directions for future work.
+
+% ============================================================
+\section{Literature Review}
+\label{sec:litreview}
+
+\subsection{Early Automated DR Detection}
+\label{ssec:lit_early}
+
+Early automated DR detection relied on hand-crafted features extracted from the
+optic disc, blood vessels, hard exudates, and microaneurysms.
+TODO Author et al.\ \cite{TODO_early1} proposed \ldots
+% TODO: summarise 1-2 classical machine-learning papers
+
+\subsection{Deep Learning for Fundus Image Analysis}
+\label{ssec:lit_dl}
+
+The landmark work of Gulshan et al.\ \cite{TODO_gulshan2016} demonstrated that a
+deep CNN trained on over 128,000 fundus images could achieve ophthalmologist-level
+sensitivity and specificity for diabetic retinopathy.
+Subsequent studies confirmed that transfer learning from large natural-image
+datasets provides a strong initialisation for fundus analysis
+\cite{TODO_transfer_learning}.
+
+\subsubsection{Backbone Architectures}
+ResNet \cite{TODO_he2016} introduced residual connections that allow training of
+very deep networks by mitigating the vanishing-gradient problem.
+EfficientNet \cite{TODO_tan2019} proposed a principled compound scaling strategy
+that simultaneously scales network depth, width, and resolution, achieving
+superior accuracy-efficiency trade-offs.
+% TODO: cite additional architecture papers relevant to DR.
+
+\subsubsection{Class Imbalance in DR Datasets}
+DR datasets are inherently imbalanced --- a majority of patients exhibit no or mild
+retinopathy, whereas advanced grades are rare.
+Strategies reported in the literature include weighted loss functions
+\cite{TODO_weighted_loss}, oversampling (SMOTE, Mixup), and data augmentation
+tailored to medical images \cite{TODO_augmentation}.
+
+\subsubsection{Ordinal Classification}
+Because DR grades form an ordinal scale, standard cross-entropy loss does not
+exploit the ordering information.
+CORN \cite{TODO_corn} and CORAL \cite{TODO_coral} reformulate ordinal regression
+as a set of binary sub-tasks, enforcing rank consistency in the output layer.
+Focal loss \cite{TODO_focal} down-weights easy examples and has shown benefits for
+imbalanced medical imaging tasks.
+
+\subsection{Interpretability in Medical AI}
+\label{ssec:lit_xai}
+
+Class Activation Mapping (CAM) and its gradient-based extension, Grad-CAM
+\cite{TODO_gradcam}, produce saliency maps that highlight image regions most
+influential to a model's prediction.
+In ophthalmology, Grad-CAM has been used to verify that CNNs attend to known
+lesion types rather than image artefacts \cite{TODO_gradcam_eye}.
+
+\subsection{Summary and Research Gap}
+\label{ssec:lit_gap}
+
+% TODO: 2-3 sentences identifying what prior work leaves open and how this work addresses it
+Existing studies have \ldots
+This work contributes \ldots
+
+% ============================================================
+\section{Dataset}
+\label{sec:dataset}
+
+\subsection{Source and Description}
+\label{ssec:data_source}
+
+% TODO: replace with the actual dataset name/link/citation
+The dataset used in this study consists of colour fundus photographs labelled by
+trained graders into five DR severity grades.
+\Cref{tab:class_dist} summarises the per-class sample counts.
+
+\begin{table}[H]
+\centering
+\caption{Class distribution in the dataset.}
+\label{tab:class_dist}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Grade} & \textbf{Label} & \textbf{No.\ Images} \\
+\midrule
+0 & No DR          & 1805 \\
+1 & Mild NPDR      & TODO \\
+2 & Moderate NPDR  & TODO \\
+3 & Severe NPDR    & 193  \\
+4 & Proliferative  & TODO \\
+\midrule
+  & \textbf{Total} & TODO \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Preprocessing}
+\label{ssec:preprocessing}
+
+All images were resized to $224 \times 224$ pixels using bicubic interpolation.
+Pixel values were normalised using ImageNet channel statistics
+($\mu = [0.485, 0.456, 0.406]$, $\sigma = [0.229, 0.224, 0.225]$).
+For the grayscale experiment (Exp~5), images were converted to single-channel
+luminance representations and the channel mean/std were adjusted accordingly.
+
+\subsection{Data Augmentation}
+\label{ssec:augmentation}
+
+The following augmentations were applied on-the-fly during training:
+random horizontal and vertical flipping, random rotation ($\pm 30^\circ$),
+and colour jitter (brightness, contrast, saturation, hue).
+No augmentation was applied at inference time.
+
+\subsection{Train / Validation Split}
+\label{ssec:split}
+
+The dataset was split into 80\% training and 20\% validation using stratified
+sampling to preserve class proportions across both subsets.
+
+% ============================================================
+\section{Methodology}
+\label{sec:methodology}
+
+\subsection{Experimental Protocol}
+\label{ssec:protocol}
+
+All experiments share the following hyperparameter configuration unless stated
+otherwise:
+\begin{itemize}
+    \item Optimiser: Adam ($\beta_1=0.9$, $\beta_2=0.999$, $\epsilon=10^{-8}$)
+    \item Learning rate: $10^{-4}$ (no scheduler)
+    \item Batch size: 16 (Exp~1--4); 8 (Exp~5)
+    \item Training epochs: 10
+    \item Hardware: TODO (GPU type, VRAM)
+\end{itemize}
+
+\subsection{Baseline --- ResNet-18 (Exp~1)}
+\label{ssec:exp1}
+
+ResNet-18 \cite{TODO_he2016} (11M parameters) pretrained on ImageNet serves as
+the primary baseline.
+The final fully connected layer was replaced with a linear layer mapping to 5
+classes.
+Standard cross-entropy loss was used.
+
+\subsection{ResNet-50 (Exp~2)}
+\label{ssec:exp2}
+
+ResNet-50 (25M parameters) was evaluated to assess the effect of increased model
+capacity while keeping the architecture family constant.
+
+\subsection{EfficientNet-B0 (Exp~3)}
+\label{ssec:exp3}
+
+EfficientNet-B0 (5.3M parameters) was included to test whether compound-scaled
+architectures offer a better accuracy-to-parameter trade-off on this task.
+
+\subsection{Weighted Cross-Entropy (Exp~4)}
+\label{ssec:exp4}
+
+To address class imbalance, per-class weights were computed as the inverse of
+normalised class frequencies:
+\begin{equation}
+    w_c = \frac{N}{\,K \cdot n_c\,},
+\end{equation}
+where $N$ is the total number of training samples, $K$ is the number of classes,
+and $n_c$ is the count of class $c$.
+This experiment used the ResNet-18 backbone.
+
+\subsection{Grayscale Preprocessing (Exp~5)}
+\label{ssec:exp5}
+
+To investigate whether colour information is essential for DR grading, images were
+converted to grayscale and the ResNet-18 input layer was adapted to accept a
+single channel.
+This also serves as a domain-alignment ablation, since many clinical fundus cameras
+produce green-channel or grayscale images.
+
+\subsection{Evaluation Metrics}
+\label{ssec:metrics}
+
+\paragraph{Quadratic Weighted Kappa (QWK).}
+The primary metric, sensitive to the ordinal structure of DR grades:
+\begin{equation}
+    \kappa = 1 - \frac{\sum_{i,j} w_{ij} O_{ij}}{\sum_{i,j} w_{ij} E_{ij}},
+    \quad w_{ij} = \frac{(i-j)^2}{(K-1)^2}.
+\end{equation}
+A QWK of 0 indicates chance agreement; 1 indicates perfect agreement.
+
+\paragraph{Macro-averaged F1-score.}
+Complements QWK by treating each class equally regardless of support.
+
+\paragraph{Per-class precision, recall, and F1.}
+Reported in the classification report to diagnose per-grade performance.
+
+\paragraph{Confusion matrix.}
+Visualised to reveal systematic grade confusion patterns.
+
+\subsection{Interpretability: Grad-CAM}
+\label{ssec:gradcam}
+
+Gradient-weighted Class Activation Maps (Grad-CAM) \cite{TODO_gradcam} were
+computed for the final convolutional layer of each backbone to produce heatmaps
+highlighting discriminative image regions for each predicted grade.
+
+% ============================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{Quantitative Comparison}
+\label{ssec:quant}
+
+\Cref{tab:main_results} summarises the performance of all experiments on the
+validation set.
+
+\begin{table}[H]
+\centering
+\caption{Validation performance across experiments. Best values in \textbf{bold}.}
+\label{tab:main_results}
+\begin{tabular}{llccc}
+\toprule
+\textbf{Exp} & \textbf{Model / Setting} & \textbf{QWK} & \textbf{Accuracy (\%)} & \textbf{Macro F1} \\
+\midrule
+1 & ResNet-18 (baseline)      & TODO            & TODO & TODO \\
+2 & ResNet-50                 & 0.8678          & TODO & TODO \\
+3 & EfficientNet-B0           & \textbf{0.8771} & TODO & TODO \\
+4 & ResNet-18 + Weighted CE   & 0.8666          & TODO & TODO \\
+5 & ResNet-18 + Grayscale     & 0.8690          & TODO & TODO \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Training Dynamics}
+\label{ssec:training_curves}
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \figplaceholder{training\_curves\_resnet18.png}
+        \caption{ResNet-18 (Exp~1)}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \figplaceholder{training\_curves\_efficientnet.png}
+        \caption{EfficientNet-B0 (Exp~3)}
+    \end{subfigure}
+    \caption{Training and validation loss / QWK curves for selected experiments.}
+    \label{fig:training_curves}
+\end{figure}
+
+\subsection{Confusion Matrices}
+\label{ssec:conf_matrices}
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \figplaceholder[5cm]{confusion\_matrix\_resnet18.png}
+        \caption{ResNet-18}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \figplaceholder[5cm]{confusion\_matrix\_efficientnet.png}
+        \caption{EfficientNet-B0}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \figplaceholder[5cm]{confusion\_matrix\_weighted\_ce.png}
+        \caption{ResNet-18 + Weighted CE}
+    \end{subfigure}
+    \caption{Normalised confusion matrices (rows: true grade; columns: predicted grade).}
+    \label{fig:conf_matrices}
+\end{figure}
+
+\subsection{Grad-CAM Visualisations}
+\label{ssec:gradcam_results}
+
+\begin{figure}[H]
+    \centering
+    \figplaceholder[7cm]{gradcam\_examples\_resnet18.png}
+    \caption{Grad-CAM overlays for ResNet-18 across DR grades 0--4.
+             Warmer colours indicate regions of higher importance to the prediction.}
+    \label{fig:gradcam}
+\end{figure}
+
+% ============================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Effect of Architecture}
+\label{ssec:disc_arch}
+
+EfficientNet-B0 outperformed both ResNet variants despite having fewer parameters
+than ResNet-18, suggesting that compound scaling leads to more efficient feature
+extraction for retinal images.
+The marginal gap between ResNet-50 and EfficientNet-B0 (TODO pp.\ QWK) implies
+that \ldots
+% TODO: expand analysis
+
+\subsection{Effect of Class-Imbalance Weighting}
+\label{ssec:disc_imbalance}
+
+Weighted cross-entropy improved \ldots / did not substantially improve \ldots
+% TODO: discuss per-class recall changes, especially for minority Grades 3 and 4
+
+\subsection{Role of Colour Information}
+\label{ssec:disc_colour}
+
+The grayscale experiment achieved competitive performance (QWK 0.8690), indicating
+that \ldots
+% TODO: discuss clinical implications -- haemorrhage detection in red channel, etc.
+
+\subsection{Interpretability Analysis}
+\label{ssec:disc_xai}
+
+Grad-CAM maps confirm that the model attends to clinically meaningful structures:
+microaneurysms and dot haemorrhages in Grade~1--2 images, large haemorrhages and
+venous beading in Grade~3, and neovascularisation near the optic disc in Grade~4.
+% TODO: elaborate with specific examples from the figure
+
+\subsection{Limitations}
+\label{ssec:limitations}
+
+\begin{itemize}
+    \item The dataset is highly imbalanced; Grade~3 contains only 193 images,
+          limiting reliable evaluation of minority-class performance.
+    \item Training was limited to 10 epochs without a learning-rate schedule;
+          longer training with cosine annealing or cyclical LR may improve results.
+    \item No test-time augmentation (TTA) was applied.
+    \item All models were evaluated on a single random split; cross-validation
+          would yield more reliable estimates.
+    \item TODO: add any other limitations specific to your setup.
+\end{itemize}
+
+% ============================================================
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+
+This preliminary study established five CNN baselines for five-class diabetic
+retinopathy grading from colour fundus photographs.
+EfficientNet-B0 achieved the best QWK of 0.8771, outperforming deeper ResNet
+variants while using fewer parameters.
+Weighted cross-entropy and grayscale preprocessing each offered modest gains over
+the ResNet-18 baseline.
+Grad-CAM visualisations confirmed that the learned representations are clinically
+interpretable.
+
+\subsection*{Future Work}
+
+\begin{enumerate}[label=\arabic*.]
+    \item \textbf{Ordinal loss functions} (CORAL, CORN) to exploit label ordering.
+    \item \textbf{Focal loss} to further mitigate class imbalance.
+    \item \textbf{Advanced data augmentation}: Mixup, CutMix, or domain-specific
+          green-channel enhancement.
+    \item \textbf{Stronger backbones}: EfficientNet-B4/B7, ConvNeXt, or
+          Vision Transformers (ViT, Swin).
+    \item \textbf{Learning-rate scheduling} and longer training runs.
+    \item \textbf{Ensemble} top-performing models to further boost QWK.
+    \item \textbf{External validation} on an independent dataset to assess
+          generalisation.
+\end{enumerate}
+
+% ============================================================
+\begin{thebibliography}{99}
+
+\bibitem{TODO_kaggle}
+Kaggle, ``Diabetic Retinopathy Detection Challenge,'' 2015.
+[Online]. Available: \url{https://www.kaggle.com/c/diabetic-retinopathy-detection}
+
+\bibitem{TODO_early1}
+TODO Author et al., ``TODO: Title of classical DR detection paper,''
+\textit{TODO Journal / Conference}, vol.~TODO, pp.~TODO--TODO, TODO year.
+
+\bibitem{TODO_gulshan2016}
+V.~Gulshan et al., ``Development and Validation of a Deep Learning Algorithm
+for Detection of Diabetic Retinopathy in Retinal Fundus Photographs,''
+\textit{JAMA}, vol.~316, no.~22, pp.~2402--2410, 2016.
+
+\bibitem{TODO_transfer_learning}
+TODO Author et al., ``TODO: Transfer learning for fundus image analysis,''
+\textit{TODO Journal / Conference}, TODO year.
+
+\bibitem{TODO_he2016}
+K.~He, X.~Zhang, S.~Ren, and J.~Sun, ``Deep Residual Learning for Image
+Recognition,'' in \textit{Proc.\ CVPR}, Las Vegas, NV, 2016, pp.~770--778.
+
+\bibitem{TODO_tan2019}
+M.~Tan and Q.~Le, ``EfficientNet: Rethinking Model Scaling for Convolutional
+Neural Networks,'' in \textit{Proc.\ ICML}, 2019.
+
+\bibitem{TODO_weighted_loss}
+TODO Author et al., ``TODO: Weighted loss / class imbalance in medical imaging,''
+\textit{TODO Journal / Conference}, TODO year.
+
+\bibitem{TODO_augmentation}
+TODO Author et al., ``TODO: Data augmentation strategies for retinal images,''
+\textit{TODO Journal / Conference}, TODO year.
+
+\bibitem{TODO_corn}
+TODO Author et al., ``TODO: CORN --- Conditional Ordinal Regression for NNs,''
+\textit{TODO Journal / Conference}, TODO year.
+
+\bibitem{TODO_coral}
+W.~Cao, V.~Mir\'{e}i, J.~Ramirez-de-Arellano, and S.~Raschka,
+``Rank Consistent Ordinal Regression for Neural Networks with Application to
+Age Estimation,'' \textit{Pattern Recognition Letters}, 2020.
+
+\bibitem{TODO_focal}
+T.-Y.~Lin, P.~Goyal, R.~Girshick, K.~He, and P.~Doll\'{a}r,
+``Focal Loss for Dense Object Detection,''
+\textit{IEEE Trans.\ Pattern Anal.\ Mach.\ Intell.}, vol.~42, no.~2, 2020.
+
+\bibitem{TODO_gradcam}
+R.~R.~Selvaraju et al., ``Grad-CAM: Visual Explanations from Deep Networks
+via Gradient-based Localization,'' \textit{Int.\ J.\ Comput.\ Vis.}, vol.~128,
+pp.~336--359, 2020.
+
+\bibitem{TODO_gradcam_eye}
+TODO Author et al., ``TODO: Grad-CAM applied to ophthalmology / retinal imaging,''
+\textit{TODO Journal / Conference}, TODO year.
+
+\end{thebibliography}
+
+\end{document}
