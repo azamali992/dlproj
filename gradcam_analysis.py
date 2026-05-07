@@ -68,38 +68,51 @@ CLINICAL_FEATURES = {
 }
 
 # ============================================================================
-# EXPERIMENTS TO ANALYZE
+# EXPERIMENTS TO ANALYZE (UPDATED WITH FINE-TUNED MODEL)
 # ============================================================================
 EXPERIMENTS = {
     'baseline': {
-        'name': 'Exp1: ResNet18 + CE',
+        'name': 'Exp1: ResNet18 (Baseline) + CE',
         'model_path': 'results/baseline/best_model.pth',
         'model_type': 'resnet18',
-        'output_dir': 'results/baseline/gradcam'
+        'output_dir': 'results/baseline/gradcam',
+        'description': 'Training from scratch with standard cross-entropy loss'
+    },
+    'finetuned_resnet': {
+        'name': 'Exp Finetuned: ResNet18 (Fine-Tuned Backbone) + CE',
+        'model_path': 'results/exp_finetuned_resnet18/best_model.pth',
+        'model_type': 'resnet18',
+        'is_finetuned': True,  # ← Special flag for fine-tuned model
+        'output_dir': 'results/exp_finetuned_resnet18/gradcam',
+        'description': 'Fine-tuned with frozen backbone, improved for minority classes'
     },
     'resnet50': {
         'name': 'Exp2: ResNet50 + CE',
         'model_path': 'results/exp2_resnet50/best_model.pth',
         'model_type': 'resnet50',
-        'output_dir': 'results/exp2_resnet50/gradcam'
+        'output_dir': 'results/exp2_resnet50/gradcam',
+        'description': 'Deeper architecture, 50 layers'
     },
     'efficientnet': {
         'name': 'Exp3: EfficientNet-B0 + CE',
         'model_path': 'results/exp3_efficientnet/best_model.pth',
         'model_type': 'efficientnet',
-        'output_dir': 'results/exp3_efficientnet/gradcam'
+        'output_dir': 'results/exp3_efficientnet/gradcam',
+        'description': 'Efficient architecture with compound scaling'
     },
     'weighted_ce': {
         'name': 'Exp4: ResNet18 + Weighted CE',
         'model_path': 'results/exp4_weighted_ce/best_model.pth',
         'model_type': 'resnet18',
-        'output_dir': 'results/exp4_weighted_ce/gradcam'
+        'output_dir': 'results/exp4_weighted_ce/gradcam',
+        'description': 'Addresses class imbalance with weighted loss'
     },
     'grayscale': {
         'name': 'Exp5: ResNet18 + CE + Grayscale',
         'model_path': 'results/exp5_grayscale/best_model.pth',
         'model_type': 'resnet18',
-        'output_dir': 'results/exp5_grayscale/gradcam'
+        'output_dir': 'results/exp5_grayscale/gradcam',
+        'description': 'Grayscale input to verify color importance'
     },
 }
 
@@ -107,28 +120,62 @@ EXPERIMENTS = {
 # HELPER FUNCTIONS
 # ============================================================================
 
-def load_model(model_type, model_path, num_classes=5):
-    """Load a trained model and return model + target layer for Grad-CAM"""
+def load_model(model_type, model_path, num_classes=5, is_finetuned=False):
+    """Load a trained model and return model + target layer for Grad-CAM
+    
+    Args:
+        model_type: 'resnet18', 'resnet50', 'efficientnet'
+        model_path: path to model weights
+        num_classes: number of output classes
+        is_finetuned: True if this is a fine-tuned model with backbone wrapper
+    """
 
     if model_type == 'resnet18':
-        model = models.resnet18(weights=None)
-        model.fc = nn.Linear(model.fc.in_features, num_classes)
-        target_layer = [model.layer4[-1]]  # Last conv block
+        if is_finetuned:
+            # Fine-tuned model has ResNet18FineTuned wrapper with backbone + fc
+            model = models.resnet18(weights=None)
+            model.fc = nn.Sequential(
+                nn.Dropout(0.5),
+                nn.Linear(model.fc.in_features, 512),
+                nn.ReLU(),
+                nn.Dropout(0.3),
+                nn.Linear(512, num_classes)
+            )
+            target_layer = [model.layer4[-1]]  # Last conv block
+            
+            # Load and adapt state dict (remove 'backbone.' prefix)
+            state_dict = torch.load(model_path, map_location=DEVICE)
+            new_state_dict = {}
+            for k, v in state_dict.items():
+                # Remove 'backbone.' prefix from keys
+                if k.startswith('backbone.'):
+                    new_k = k.replace('backbone.', '')
+                    new_state_dict[new_k] = v
+                else:
+                    new_state_dict[k] = v
+            model.load_state_dict(new_state_dict)
+        else:
+            # Standard baseline model
+            model = models.resnet18(weights=None)
+            model.fc = nn.Linear(model.fc.in_features, num_classes)
+            target_layer = [model.layer4[-1]]
+            model.load_state_dict(torch.load(model_path, map_location=DEVICE))
 
     elif model_type == 'resnet50':
         model = models.resnet50(weights=None)
         model.fc = nn.Linear(model.fc.in_features, num_classes)
         target_layer = [model.layer4[-1]]
+        model.load_state_dict(torch.load(model_path, map_location=DEVICE))
 
     elif model_type == 'efficientnet':
         model = models.efficientnet_b0(weights=None)
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
         target_layer = [model.features[-1]]  # Last feature block
+        model.load_state_dict(torch.load(model_path, map_location=DEVICE))
 
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
     model = model.to(DEVICE)
     model.eval()
 
@@ -370,6 +417,7 @@ SUMMARY
 [Does the model generally attend to clinically relevant features?]
 [Which grades show the strongest clinical alignment?]
 [Any concerns about model attention patterns?]
+[How does this model compare to baseline for clinical interpretability?]
 
 NOTE: This analysis follows the methodology of Quellec et al. (2019)
 who showed kappa=0.76 agreement between Grad-CAM and ophthalmologist annotations.
@@ -383,10 +431,11 @@ who showed kappa=0.76 agreement between Grad-CAM and ophthalmologist annotations
 # MAIN
 # ============================================================================
 def main():
-    print("="*60)
+    print("="*80)
     print("GRAD-CAM ANALYSIS FOR DIABETIC RETINOPATHY")
-    print("="*60)
+    print("="*80)
     print(f"Device: {DEVICE}")
+    print(f"Processing {len(EXPERIMENTS)} experiments\n")
 
     # Load data
     df = pd.read_csv(TRAIN_CSV)
@@ -396,25 +445,32 @@ def main():
     print(f"Using {len(val_df)} validation images\n")
 
     # Process each experiment
+    completed = 0
+    skipped = 0
+
     for exp_key, exp_config in EXPERIMENTS.items():
 
         # Check if model exists
         if not os.path.exists(exp_config['model_path']):
             print(f"⚠ Skipping {exp_config['name']} — no model found at {exp_config['model_path']}")
+            skipped += 1
             continue
 
-        print(f"\n{'─'*60}")
+        print(f"\n{'─'*80}")
         print(f"Processing: {exp_config['name']}")
-        print(f"{'─'*60}")
+        print(f"Description: {exp_config['description']}")
+        print(f"{'─'*80}")
 
         # Create output directory
         os.makedirs(exp_config['output_dir'], exist_ok=True)
 
         # Load model
         is_grayscale = (exp_key == 'grayscale')
+        is_finetuned = exp_config.get('is_finetuned', False)  # Get flag, default False
         model, target_layer = load_model(
             exp_config['model_type'],
-            exp_config['model_path']
+            exp_config['model_path'],
+            is_finetuned=is_finetuned  # Pass the flag
         )
         print(f"  ✓ Model loaded from {exp_config['model_path']}")
 
@@ -449,15 +505,23 @@ def main():
         # Cleanup
         del model
         torch.cuda.empty_cache()
+        
+        completed += 1
 
-    print(f"\n{'='*60}")
+    print(f"\n{'='*80}")
     print("GRAD-CAM ANALYSIS COMPLETE!")
-    print("="*60)
-    print("\nGenerated files per experiment:")
-    print("  gradcam_grid.png              — Grid: all grades, multiple samples")
-    print("  gradcam_grade_X_detail.png    — Detailed view per grade (0-4)")
-    print("  gradcam_clinical_summary.png  — Summary with predictions (BEST FOR REPORT)")
-    print("  clinical_analysis_report.txt  — Template to fill in observations")
+    print("="*80)
+    print(f"\nResults:")
+    print(f"  ✓ Completed: {completed} experiments")
+    print(f"  ⚠ Skipped: {skipped} experiments (models not found)")
+    print(f"\nGenerated files per experiment:")
+    print(f"  gradcam_grid.png              — Grid: all grades, multiple samples")
+    print(f"  gradcam_grade_X_detail.png    — Detailed view per grade (0-4)")
+    print(f"  gradcam_clinical_summary.png  — Summary with predictions (BEST FOR REPORT)")
+    print(f"  clinical_analysis_report.txt  — Template to fill in observations")
+    print(f"\nNote: Fine-tuned model included in Experiments!")
+    print(f"      Compare gradcam_clinical_summary.png between baseline and fine-tuned")
+    print(f"      to verify improved clinical alignment on minority classes.")
 
 
 if __name__ == '__main__':
