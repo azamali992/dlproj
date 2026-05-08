@@ -60,3 +60,14 @@ the combination of hybrid ordinal-imbalance-aware loss functions and robust prep
 informed and technically optimized framework for diabetic retinopathy classification, with the goal of improving
 predictive accuracy across all severity levels, especially in minority and early-detection classes where accurate
 diagnosis is most critical.
+
+Building upon the baseline established using ResNet-18, which was initially trained without advanced preprocessing or 
+loss function enhancements, we plan to further investigate whether alternative architectures can provide superior performance 
+when combined with the proposed methodological improvements. Specifically, we will evaluate DenseNet and EfficientNet alongside 
+the improved ResNet-18 framework after integrating Ben Graham preprocessing, CLAHE-based contrast enhancement, data augmentation, 
+and the combined Focal-CORAL loss function. Each architecture will be trained and evaluated under the same enhanced preprocessing 
+and loss function framework to ensure fair comparison. Performance will be assessed using metrics such as accuracy, F1-score, 
+recall, and sensitivity across all diabetic retinopathy severity grades, with particular attention to minority and severe classes. 
+In addition to predictive performance, model complexity and parameter count will also be analyzed. This comparative strategy will allow 
+us to quantify not only the gains achieved through methodological improvements over the original ResNet-18 baseline, but also determine 
+which architecture provides the most effective balance between classification performance and practical deployment considerations.
