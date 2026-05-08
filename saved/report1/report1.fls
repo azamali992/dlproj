@@ -1,6 +1,6 @@
-PWD d:\Desktop\DL Project\dlproj\reports
+PWD d:\Desktop\DL Project\dlproj\reports\report1
 INPUT C:\Users\Uzair Khan\AppData\Local\MiKTeX\miktex\data\le\pdftex\pdflatex.fmt
-INPUT d:\Desktop\DL Project\dlproj\reports\report1.tex
+INPUT d:\Desktop\DL Project\dlproj\reports\report1\report1.tex
 OUTPUT report1.log
 INPUT C:\Users\Uzair Khan\AppData\Local\Programs\MiKTeX\tex\latex\base\article.cls
 INPUT C:\Users\Uzair Khan\AppData\Local\Programs\MiKTeX\tex\latex\base\article.cls
