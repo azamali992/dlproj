@@ -4,3 +4,76 @@
 \section{Methodology}
 % TODO: Detail the proposed pipeline -- dataset splits, preprocessing,
 % architecture, loss function, training hyperparameters, and Grad-CAM analysis.
+As discussed previously, the baseline model’s performance is significantly constrained by two major limitations in the dataset 
+and problem structure: severe class imbalance and the ordinal nature of diabetic retinopathy severity grades. The dataset is 
+heavily skewed toward lower-grade samples, causing the model to bias predictions toward majority classes while underperforming 
+on minority classes representing more severe disease stages. In addition, diabetic retinopathy classification is inherently ordinal,
+meaning that misclassifications should not all be treated equally. For example, predicting a Grade 4 image as Grade 3 is considerably
+less severe than predicting it as Grade 0, yet standard Cross Entropy Loss penalizes both errors similarly because it treats
+classes as independent categories rather than ordered progression levels. This limits the model’s ability to learn the structured 
+severity relationship between grades.
+
+To address these shortcomings, we propose the use of a hybrid loss function that combines Focal Loss and CORAL 
+(Consistent Rank Logits) Loss. Focal Loss is specifically designed to mitigate class imbalance by dynamically down-weighting 
+easy, high-confidence predictions and assigning greater emphasis to hard or misclassified examples. This will ensure that
+minority and difficult samples contribute more significantly during backpropagation, improving sensitivity to
+underrepresented disease stages. CORAL Loss, on the other hand, is designed for ordinal classification problems
+by transforming multi-class prediction into a series of ordered binary threshold tasks. Instead of treating grades
+as unrelated labels, CORAL will learn rank-consistent decision boundaries that explicitly preserve severity progression,
+allowing the model to better understand the ordered relationship between diabetic retinopathy grades. By integrating
+Focal weighting into the CORAL framework, the proposed loss function will simultaneously address both imbalance and ordinality,
+enabling the model to prioritize difficult minority samples while preserving clinically meaningful grading structure. The 
+following is the loss function we formulated:
+
+\[
+\mathcal{L}_{\text{Focal-CORAL}} =
+- \sum_{i=1}^{N}\sum_{k=1}^{K-1}
+\alpha_k (1-p_{t,i}^{(k)})^\gamma \log\left(p_{t,i}^{(k)}\right)
+\]
+
+\[
+p_{t,i}^{(k)} =
+\begin{cases}
+p_i^{(k)}, & \text{if } y_i^{(k)} = 1 \\
+1 - p_i^{(k)}, & \text{if } y_i^{(k)} = 0
+\end{cases}
+\]
+
+\[
+p_i^{(k)} = \sigma(z_i^{(k)})
+\]
+
+\[
+y_i^{(k)} = \mathbb{I}(y_i > k), \quad k = 1,2,\dots,K-1
+\]
+
+In addition to loss function improvements, extensive preprocessing will be applied to enhance image quality and reduce
+irrelevant variability in retinal fundus images. Medical retinal images often suffer from inconsistent illumination,
+poor contrast, noise, and imaging artifacts due to differences in acquisition devices and conditions. To standardize
+the dataset, Ben Graham preprocessing will be employed to normalize illumination, suppress background variation, and enhance
+retinal structures by subtracting local average intensity. This will improve visibility of important pathological
+features such as blood vessels, microaneurysms, exudates, and hemorrhages. Furthermore, Contrast Limited Adaptive Histogram
+Equalization (CLAHE) will be applied to improve local contrast, particularly in darker or low-quality regions, making subtle
+lesions more distinguishable while preventing excessive noise amplification. These preprocessing techniques will collectively
+improve feature clarity, reduce inter-image variability, and help the model focus on clinically relevant patterns rather
+than acquisition-related inconsistencies.
+
+To further address class imbalance, data augmentation strategies will also be applied more aggressively to minority
+classes. Transformations such as rotation, flipping, zooming, brightness adjustments, and cropping will increase sample
+diversity while preserving pathological relevance. This will not only improve representation of under-sampled severity
+grades but also enhance model generalization by exposing it to a broader range of retinal variations. Together,
+the combination of hybrid ordinal-imbalance-aware loss functions and robust preprocessing will create a more clinically
+informed and technically optimized framework for diabetic retinopathy classification, with the goal of improving
+predictive accuracy across all severity levels, especially in minority and early-detection classes where accurate
+diagnosis is most critical.
+
+Building upon the baseline established using ResNet-18, which was initially trained without advanced preprocessing or 
+loss function enhancements, we plan to further investigate whether alternative architectures can provide superior performance 
+when combined with the proposed methodological improvements. Specifically, we will evaluate DenseNet and EfficientNet alongside 
+the improved ResNet-18 framework after integrating Ben Graham preprocessing, CLAHE-based contrast enhancement, data augmentation, 
+and the combined Focal-CORAL loss function. Each architecture will be trained and evaluated under the same enhanced preprocessing 
+and loss function framework to ensure fair comparison. Performance will be assessed using metrics such as accuracy, F1-score, 
+recall, and sensitivity across all diabetic retinopathy severity grades, with particular attention to minority and severe classes. 
+In addition to predictive performance, model complexity and parameter count will also be analyzed. This comparative strategy will allow 
+us to quantify not only the gains achieved through methodological improvements over the original ResNet-18 baseline, but also determine 
+which architecture provides the most effective balance between classification performance and practical deployment considerations.
