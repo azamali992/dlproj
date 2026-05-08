@@ -25,3 +25,4 @@ kagglehub
 tensorboard
 ipykernel
 albumentations
+cv2

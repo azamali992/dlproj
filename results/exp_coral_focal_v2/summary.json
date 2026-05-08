@@ -1,0 +1,60 @@
+{
+  "model": "DenseNet121 with CORAL + Focal Loss (v2)",
+  "best_qwk": 0.8946214530882168,
+  "ensemble_qwk": 0.8946214530882168,
+  "best_epoch": 19,
+  "label_smooth": 0.05,
+  "grad_clip": 1.0,
+  "tta": true,
+  "total_params": 6954884,
+  "trainable_params": 6619844,
+  "config": {
+    "model_name": "densenet121_coral_focal_v2",
+    "num_classes": 5,
+    "input_size": 224,
+    "batch_size": 16,
+    "num_epochs": 30,
+    "learning_rate": 0.0003,
+    "weight_decay": 0.001,
+    "device": "cuda",
+    "data_dir": "./data/raw",
+    "output_dir": "./results/exp_coral_focal_v2",
+    "resume_from_checkpoint": false,
+    "preprocessing_method": "hybrid",
+    "gamma": 2.0,
+    "label_smooth": 0.05,
+    "pretrained": true,
+    "cache_dir": "./data/preprocessed_hybrid",
+    "force_repreprocess": false,
+    "grad_clip": 1.0,
+    "top_k_checkpoints": 3,
+    "tta": true
+  },
+  "per_class_metrics": {
+    "0": {
+      "precision": 0.9489247311827957,
+      "recall": 0.9778393351800554,
+      "f1-score": 0.9631650750341064
+    },
+    "1": {
+      "precision": 0.5454545454545454,
+      "recall": 0.40540540540540543,
+      "f1-score": 0.46511627906976744
+    },
+    "2": {
+      "precision": 0.7333333333333333,
+      "recall": 0.605,
+      "f1-score": 0.663013698630137
+    },
+    "3": {
+      "precision": 0.20454545454545456,
+      "recall": 0.46153846153846156,
+      "f1-score": 0.28346456692913385
+    },
+    "4": {
+      "precision": 0.6226415094339622,
+      "recall": 0.559322033898305,
+      "f1-score": 0.5892857142857143
+    }
+  }
+}

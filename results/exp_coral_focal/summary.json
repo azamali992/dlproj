@@ -1,0 +1,59 @@
+{
+  "model": "ResNet18 with CORAL + Focal Loss",
+  "approach": "Ordinal regression with preprocessing",
+  "preprocessing": "hybrid",
+  "best_epoch": 27,
+  "best_qwk": 0.8089294478743716,
+  "best_val_loss": 0.0656136164198751,
+  "best_val_acc": 67.80354706684857,
+  "total_params": 6954884,
+  "trainable_params": 5700164,
+  "config": {
+    "model_name": "densenet121_coral_focal",
+    "num_classes": 5,
+    "input_size": 224,
+    "batch_size": 16,
+    "num_epochs": 30,
+    "learning_rate": 0.0001,
+    "weight_decay": 0.001,
+    "device": "cuda",
+    "data_dir": "./data/raw",
+    "output_dir": "./results/exp_coral_focal",
+    "resume_from_checkpoint": false,
+    "preprocessing_method": "hybrid",
+    "gamma": 2.0,
+    "pretrained": true,
+    "cache_dir": "./data/preprocessed_hybrid",
+    "force_repreprocess": false,
+    "use_augmentation": true,
+    "force_reaugment": true,
+    "target_per_class": 800
+  },
+  "per_class_metrics": {
+    "0": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0
+    },
+    "1": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0
+    },
+    "2": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0
+    },
+    "3": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0
+    },
+    "4": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0
+    }
+  }
+}
