@@ -24,5 +24,6 @@ kaggle
 kagglehub
 tensorboard
 ipykernel
-albumentations
-cv2
+timm>=0.9.0          # backbones (EfficientNet-B3 ns + multi-scale features)
+albumentations>=2.0  # augmentation (your old version 1.x will break)
+seaborn>=0.12        # confusion matrix heatmap (already used in v3, double check)
