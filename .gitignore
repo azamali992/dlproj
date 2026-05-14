@@ -23,3 +23,7 @@ Thumbs.db
 
 # Model weight files
 *.pth
+
+# Preprocessed images (do not track heavy generated datasets)
+data/preprocessed_hybrid/
+
