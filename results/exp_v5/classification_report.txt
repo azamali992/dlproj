@@ -1,0 +1,11 @@
+              precision    recall  f1-score   support
+
+     Grade 0       0.99      0.93      0.96       361
+     Grade 1       0.46      0.77      0.57        74
+     Grade 2       0.77      0.62      0.69       200
+     Grade 3       0.34      0.67      0.45        39
+     Grade 4       0.79      0.39      0.52        59
+
+    accuracy                           0.77       733
+   macro avg       0.67      0.68      0.64       733
+weighted avg       0.83      0.77      0.79       733

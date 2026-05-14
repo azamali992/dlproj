@@ -1,0 +1,74 @@
+{
+  "model": "DenseNet121 + CORAL + Focal (correct cache + grade-aware aug)",
+  "fixes_applied": [
+    "cache_dir corrected to data/processed/hybrid_512",
+    "batch_size 16\u21928 for RTX 2050 at 512px",
+    "label_smooth 0.05\u21920.0 (conflicts with focal loss)",
+    "grade-aware aug: mild/moderate/strong per grade",
+    "Windows-safe checkpoint paths via pathlib"
+  ],
+  "best_epoch": 29,
+  "best_qwk": 0.8899595128609603,
+  "ensemble_qwk": 0.8931621608177969,
+  "coral_bias": [
+    0.9471383690834045,
+    0.32064640522003174,
+    -0.306281179189682,
+    -0.8469476103782654
+  ],
+  "coral_monotonic": true,
+  "best_val_loss": 0.04380996476696885,
+  "best_val_acc": 77.48976807639836,
+  "total_params": 6954884,
+  "trainable_params": 2862404,
+  "config": {
+    "model_name": "densenet121_coral_focal_correct_cache",
+    "num_classes": 5,
+    "input_size": 224,
+    "batch_size": 16,
+    "num_epochs": 30,
+    "learning_rate": 0.0003,
+    "weight_decay": 0.001,
+    "device": "cuda",
+    "data_dir": "./data/raw",
+    "output_dir": "results\\exp_correct_cache",
+    "resume_from_checkpoint": false,
+    "preprocessing_method": "hybrid",
+    "gamma": 2.0,
+    "label_smooth": 0.0,
+    "pretrained": true,
+    "cache_dir": "data\\processed\\hybrid_224",
+    "force_repreprocess": false,
+    "grad_clip": 1.0,
+    "top_k_checkpoints": 3,
+    "tta": true,
+    "target_per_class": 800
+  },
+  "per_class_metrics": {
+    "0": {
+      "precision": 0.9673024523160763,
+      "recall": 0.9833795013850416,
+      "f1-score": 0.9752747252747253
+    },
+    "1": {
+      "precision": 0.5555555555555556,
+      "recall": 0.6756756756756757,
+      "f1-score": 0.6097560975609756
+    },
+    "2": {
+      "precision": 0.7752808988764045,
+      "recall": 0.69,
+      "f1-score": 0.7301587301587301
+    },
+    "3": {
+      "precision": 0.2459016393442623,
+      "recall": 0.38461538461538464,
+      "f1-score": 0.3
+    },
+    "4": {
+      "precision": 0.6756756756756757,
+      "recall": 0.423728813559322,
+      "f1-score": 0.5208333333333334
+    }
+  }
+}

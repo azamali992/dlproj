@@ -1,40 +1,43 @@
 """
-train_coral_focal_correct_cache.py
-====================================
-Fixes applied vs train_coral_focal_v3.py:
+train_coral_focal_v5.py
+========================
+Changes vs train_coral_focal_correct_cache.py
+---------------------------------------------
 
-1. CACHE PATH — was './data/preprocessed_hybrid' (old v2 cache, wrong pipeline).
-   Now './data/processed/hybrid_512' which is where preprocess_grade_aware_aug.py
-   actually saves files (Ben Graham + LAB-CLAHE + fundus crop + circle mask).
-   Every run before this was training on the wrong preprocessed images.
+1. INDEPENDENT PER-THRESHOLD PROJECTIONS (losses_v5 / models_v5)
+   The shared weight vector in v2 was a single Linear(1024→1) producing one
+   number that all 4 CORAL thresholds relied on. Features that separate G0/G1
+   (microaneurysm presence) are not the same features that separate G3/G4
+   (neovascularisation). v3 uses 4 independent Linear(1024→1) projections,
+   one per boundary, plus an ordinal consistency regularization term to keep
+   predictions rank-monotone.
 
-2. BATCH SIZE — was 16 at 512px input on a 4GB GPU (RTX 2050).
-   512x512x3 float32 x 16 = ~3.8GB before activations/gradients → OOM risk.
-   Now 8, which uses ~2.2GB and trains stably.
+2. ALPHA ON ORIGINAL IMBALANCED LABELS
+   v2 called compute_alpha(train_df_balanced) — after oversampling all classes
+   to 800, alpha was near-uniform [≈0.79, 0.87, 0.87, 1.0] and did nothing.
+   v5 calls compute_alpha(train_df_original) — before balancing, giving real
+   weights [≈1.00, 1.07, 1.23, 1.25] that push 25% more gradient toward the
+   G2/G3 and G3/G4 thresholds where the model is weakest.
 
-3. LABEL SMOOTHING OFF — was label_smooth=0.05 with gamma=2.0 focal loss.
-   These two conflict: focal suppresses easy examples, smoothing inflates
-   their loss back up. Net effect: gradient signal that focal was focusing
-   onto hard/minority cases gets diluted. Set label_smooth=0.0 — focal
-   alone handles hard example mining.
+3. UNFREEZE DENSEBLOCK3
+   Previous run (claude Code edit) froze denseblock1+2+3, leaving only
+   denseblock4 + CORAL head trainable (~35% of params). denseblock3 learns
+   lesion morphology features (haemorrhage shapes, exudate boundaries) that
+   are fundus-specific and cannot be inherited from ImageNet. Freezing it
+   directly caused G3 recall to drop to 0.38. v5 freezes denseblock1 ONLY.
 
-4. GRADE-AWARE AUGMENTATION — imports from preprocess_grade_aware_aug.py
-   and dispatches per sample: G0/G1 → mild, G2 → moderate, G3/G4 → strong.
-   Replaces the single get_train_augmentation_strong() for all grades which
-   was erasing microaneurysms from Grade 1 images (blur/dropout on 3-6px dots).
-
-5. WINDOWS PATH FIX — TopKCheckpoints.update() now uses pathlib.Path so
-   checkpoint filenames don't mix / and \ and cause RuntimeError on Windows.
-
-6. CORAL BIAS DIAGNOSTIC — prints bias vector after training so you can
-   verify rank-monotonicity of the learned thresholds.
-
-7. OUTPUT DIR renamed to exp_correct_cache to distinguish from previous runs.
+4. All previous fixes retained:
+   - Correct cache path (data/processed/hybrid_224)
+   - label_smooth=0.0
+   - Grade-aware augmentation (mild/moderate/strong per class)
+   - Windows-safe pathlib checkpoints
+   - CORAL bias diagnostic
+   - TTA + top-3 ensemble
 """
 
 import torch
 import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
+from torch.utils.data import DataLoader, Dataset
 import pandas as pd
 import numpy as np
 from sklearn.metrics import cohen_kappa_score, confusion_matrix, classification_report
@@ -49,7 +52,6 @@ import cv2
 import warnings
 warnings.filterwarnings('ignore')
 
-# ── grade-aware aug pipeline (the fixed preprocessing) ──────────────────────
 from preprocess_grade_aware_aug import (
     preprocess_and_cache,
     create_balanced_train_dataframe,
@@ -59,36 +61,34 @@ from preprocess_grade_aware_aug import (
     get_val_augmentation,
     verify_augmentation,
 )
-from utils.losses_v2 import CORALModule_v2
-from utils.models_v2 import DenseNet121withCORALFocal_v2, freeze_early_layers
+from utils.losses_v5 import CORALModule_v5
+from utils.models_v5 import DenseNet121withCORALFocal_v5, freeze_early_layers
 
 
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
 CONFIG = {
-    'model_name': 'densenet121_coral_focal_correct_cache',
-    'num_classes': 5,
-    'input_size': 224,
-    'batch_size': 16,           # increased from 8: 224px fits comfortably on RTX 2050
-    'num_epochs': 30,
-    'learning_rate': 3e-4,
-    'weight_decay': 1e-3,
-    'device': 'cuda' if torch.cuda.is_available() else 'cpu',
-    'data_dir': './data/raw',
-    'output_dir': os.path.join('results', 'exp_correct_cache'),  # pathlib-safe
+    'model_name':             'densenet121_coral_v5',
+    'num_classes':            5,
+    'input_size':             224,
+    'batch_size':             16,
+    'num_epochs':             30,
+    'learning_rate':          3e-4,
+    'weight_decay':           1e-3,
+    'device':                 'cuda' if torch.cuda.is_available() else 'cpu',
+    'data_dir':               './data/raw',
+    'output_dir':             os.path.join('results', 'exp_v5'),
     'resume_from_checkpoint': False,
-    'preprocessing_method': 'hybrid',
-    'gamma': 2.0,
-    'label_smooth': 0.0,        # FIX 3: was 0.05 — conflicts with focal loss
-    'pretrained': True,
-    # FIX 1: correct cache path — this is where preprocess_grade_aware_aug.py saves
-    'cache_dir': os.path.join('data', 'processed', 'hybrid_224'),
-    'force_repreprocess': False,
-    'grad_clip': 1.0,
-    'top_k_checkpoints': 3,
-    'tta': True,
-    'target_per_class': 800,
+    'preprocessing_method':   'hybrid',
+    'gamma':                  2.0,
+    'lambda_ord':             0.1,    # ordinal consistency regularization weight
+    'pretrained':             True,
+    'cache_dir':              os.path.join('data', 'processed', 'hybrid_224'),
+    'grad_clip':              1.0,
+    'top_k_checkpoints':      3,
+    'tta':                    True,
+    'target_per_class':       800,
 }
 
 os.makedirs(CONFIG['output_dir'], exist_ok=True)
@@ -96,21 +96,15 @@ os.makedirs(CONFIG['cache_dir'],  exist_ok=True)
 
 
 # ============================================================================
-# DATASET — grade-aware augmentation dispatch
+# DATASET
 # ============================================================================
 
 class PreprocessedDRDataset(Dataset):
     """
-    Loads preprocessed images from cache and applies grade-aware augmentation.
-
-    Dispatch logic:
-        Grade 0, 1  → mild    (protect microaneurysms — 3-6px dots)
-        Grade 2     → moderate (multiple lesion types, no blur/dropout)
-        Grade 3, 4  → strong  (dense lesion fields survive conservative aug)
-
-    All aug pipelines from preprocess_grade_aware_aug end with
-    Normalize(ImageNet) + ToTensorV2 — output is a normalized float32
-    torch.Tensor (C, H, W). Do NOT apply manual normalization on top.
+    Grade-aware augmentation dispatch:
+        Grade 0, 1  → mild     (protect microaneurysms)
+        Grade 2     → moderate  (no blur/dropout)
+        Grade 3, 4  → strong    (dense lesions survive conservative aug)
     """
 
     def __init__(self, cache_dir, labels_df,
@@ -137,7 +131,7 @@ class PreprocessedDRDataset(Dataset):
         return self.strong_aug
 
     def __getitem__(self, idx):
-        row = self.labels_df.iloc[idx]
+        row      = self.labels_df.iloc[idx]
         img_path = os.path.join(self.cache_dir, f"{row['id_code']}.png")
 
         image = cv2.imread(img_path)
@@ -146,15 +140,15 @@ class PreprocessedDRDataset(Dataset):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         label = int(row['diagnosis'])
-        aug = self._pick_aug(label)
+        aug   = self._pick_aug(label)
 
         if aug is not None:
-            image = aug(image=image)['image']   # → torch.Tensor (C,H,W), normalized
+            image = aug(image=image)['image']
         else:
             image = torch.from_numpy(image).float() / 255.0
             image = image.permute(2, 0, 1)
-            mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-            std  = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+            mean  = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+            std   = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
             image = (image - mean) / std
 
         return image, label
@@ -179,15 +173,15 @@ def _tta_flip(image_batch):
 def train_epoch(model, train_loader, optimizer, scheduler, device, epoch, num_epochs):
     model.train()
     total_loss = 0.0
-    correct = 0
-    total = 0
+    correct    = 0
+    total      = 0
 
     for batch_idx, (images, labels) in enumerate(train_loader):
         images, labels = images.to(device), labels.to(device)
 
-        logits = model(images)
+        logits        = model(images)
         coral_targets = model.coral_label_transform(labels)
-        loss = model.loss(logits, coral_targets)
+        loss          = model.loss(logits, coral_targets)
 
         optimizer.zero_grad()
         loss.backward()
@@ -200,8 +194,8 @@ def train_epoch(model, train_loader, optimizer, scheduler, device, epoch, num_ep
 
         total_loss += loss.item()
         predictions = model.predict(logits.detach())
-        total   += labels.size(0)
-        correct += (predictions == labels).sum().item()
+        total      += labels.size(0)
+        correct    += (predictions == labels).sum().item()
 
         if (batch_idx + 1) % 50 == 0:
             lr_now = scheduler.get_last_lr()[0]
@@ -215,8 +209,8 @@ def train_epoch(model, train_loader, optimizer, scheduler, device, epoch, num_ep
 def validate(model, val_loader, device, use_tta=False):
     model.eval()
     total_loss = 0.0
-    correct = 0
-    total = 0
+    correct    = 0
+    total      = 0
     all_preds  = []
     all_labels = []
 
@@ -227,22 +221,19 @@ def validate(model, val_loader, device, use_tta=False):
             if use_tta:
                 tta_probs = None
                 for aug_images in _tta_flip(images):
-                    probs = torch.sigmoid(model(aug_images))
+                    probs     = torch.sigmoid(model(aug_images))
                     tta_probs = probs if tta_probs is None else tta_probs + probs
-                tta_probs /= 3
-                # Clamp before log to avoid -inf when probs underflow to 0.0
-                # on consumer GPUs (RTX 2050 FTZ mode). Without this, val_loss
-                # can become inf, which json.dump raises ValueError on.
-                tta_probs_clamped = tta_probs.clamp(1e-6, 1 - 1e-6)
-                logits      = torch.log(tta_probs_clamped / (1 - tta_probs_clamped))
-                predictions = (tta_probs > 0.5).sum(dim=1)
+                tta_probs   /= 3
+                tta_clamped  = tta_probs.clamp(1e-6, 1 - 1e-6)
+                logits       = torch.log(tta_clamped / (1 - tta_clamped))
+                predictions  = (tta_probs > 0.5).sum(dim=1)
             else:
                 logits      = model(images)
                 predictions = model.predict(logits)
 
             coral_targets = model.coral_label_transform(labels)
-            loss = model.loss(logits, coral_targets)
-            total_loss += loss.item()
+            loss          = model.loss(logits, coral_targets)
+            total_loss   += loss.item()
 
             total   += labels.size(0)
             correct += (predictions == labels).sum().item()
@@ -256,7 +247,7 @@ def validate(model, val_loader, device, use_tta=False):
 
 
 # ============================================================================
-# TOP-K CHECKPOINTS  (FIX 5: pathlib so Windows paths don't mix / and \)
+# TOP-K CHECKPOINTS
 # ============================================================================
 
 class TopKCheckpoints:
@@ -266,7 +257,6 @@ class TopKCheckpoints:
         self._heap    = []
 
     def update(self, qwk, epoch, model):
-        # pathlib.Path normalises separators on all platforms
         path = self.save_dir / f'model_qwk{qwk:.4f}_ep{epoch+1}.pth'
         torch.save(model.state_dict(), path)
         heapq.heappush(self._heap, (qwk, str(path)))
@@ -290,7 +280,9 @@ def ensemble_from_checkpoints(model, checkpoint_paths, val_loader, device):
     all_labels = []
 
     for ckpt_path in checkpoint_paths:
-        model.load_state_dict(torch.load(ckpt_path, map_location=device, weights_only=True))
+        model.load_state_dict(
+            torch.load(ckpt_path, map_location=device, weights_only=True)
+        )
         model.eval()
         batch_probs  = []
         batch_labels = []
@@ -308,8 +300,8 @@ def ensemble_from_checkpoints(model, checkpoint_paths, val_loader, device):
         if not all_labels:
             all_labels = batch_labels
 
-    all_probs     /= len(checkpoint_paths)
-    ensemble_preds = (all_probs > 0.5).sum(dim=1).numpy()
+    all_probs      /= len(checkpoint_paths)
+    ensemble_preds  = (all_probs > 0.5).sum(dim=1).numpy()
     qwk = cohen_kappa_score(all_labels, ensemble_preds, weights='quadratic')
     print(f"Ensemble QWK ({len(checkpoint_paths)} models): {qwk:.4f}")
     return qwk, ensemble_preds, all_labels
@@ -321,27 +313,28 @@ def ensemble_from_checkpoints(model, checkpoint_paths, val_loader, device):
 
 def main():
     print("=" * 80)
-    print("TRAINING: DenseNet121 + CORAL + Focal  (correct cache + grade-aware aug)")
+    print("TRAINING v5: DenseNet121 + independent CORAL projections")
     print("=" * 80)
-    print(f"Device:          {CONFIG['device']}")
-    print(f"Input size:      {CONFIG['input_size']}px")
-    print(f"Batch size:      {CONFIG['batch_size']}  (safe for RTX 2050 at 512px)")
-    print(f"Cache dir:       {CONFIG['cache_dir']}  ← fixed path")
-    print(f"Label smooth:    {CONFIG['label_smooth']}  (disabled — focal handles hard examples)")
-    print(f"Augmentation:    grade-aware (mild/moderate/strong per class)")
+    print(f"Device         : {CONFIG['device']}")
+    print(f"Input size     : {CONFIG['input_size']}px")
+    print(f"Batch size     : {CONFIG['batch_size']}")
+    print(f"Cache dir      : {CONFIG['cache_dir']}")
+    print(f"lambda_ord     : {CONFIG['lambda_ord']}  (ordinal consistency reg)")
+    print(f"Frozen blocks  : denseblock1 ONLY  (denseblock2/3/4 all trainable)")
+    print(f"Alpha labels   : ORIGINAL imbalanced distribution")
     print()
 
     # ── Data split ──────────────────────────────────────────────────────────
-    train_df = pd.read_csv(os.path.join(CONFIG['data_dir'], 'train.csv'))
+    full_df  = pd.read_csv(os.path.join(CONFIG['data_dir'], 'train.csv'))
     train_df, val_df = train_test_split(
-        train_df, test_size=0.2, random_state=42, stratify=train_df['diagnosis']
+        full_df, test_size=0.2, random_state=42, stratify=full_df['diagnosis']
     )
     print(f"Train: {len(train_df)}  Val: {len(val_df)}")
-    print(f"Class distribution (train):\n"
+    print(f"Class distribution (train, original):\n"
           f"{train_df['diagnosis'].value_counts().sort_index()}\n")
 
     # ── Step 1: preprocess & cache ───────────────────────────────────────────
-    print("Step 1: Preprocessing and caching (preprocess_grade_aware_aug)...")
+    print("Step 1: Preprocessing and caching...")
     preprocess_and_cache(
         raw_dir=os.path.join(CONFIG['data_dir'], 'train_images'),
         cache_dir=CONFIG['cache_dir'],
@@ -351,46 +344,39 @@ def main():
         verbose=True,
     )
 
-    # ── Step 2: balance ──────────────────────────────────────────────────────
+    # ── Step 2: balance (for training only) ──────────────────────────────────
+    # NOTE: balance AFTER saving train_df so compute_alpha gets original dist.
     print("\nStep 2: Balancing training dataset...")
     train_df_balanced = create_balanced_train_dataframe(
         train_df=train_df,
         strategy='oversample',
         target_per_class=CONFIG['target_per_class'],
     )
-    print(f"Balanced train: {len(train_df_balanced)} samples")
+    print(f"Balanced train: {len(train_df_balanced)} samples\n")
 
     # ── Step 3: verify aug ───────────────────────────────────────────────────
-    print("\nStep 3: Verifying augmentation pipeline...")
+    print("Step 3: Verifying augmentation pipeline...")
     verify_augmentation(
         cache_dir=CONFIG['cache_dir'],
         save_dir=os.path.join(CONFIG['output_dir'], 'aug_samples'),
     )
 
     # ── Step 4: datasets ─────────────────────────────────────────────────────
-    print("\nStep 4: Creating datasets (grade-aware aug)...")
+    print("\nStep 4: Creating datasets...")
     mild_aug     = get_train_augmentation_mild()
     moderate_aug = get_train_augmentation_moderate()
     strong_aug   = get_train_augmentation_strong()
     val_aug      = get_val_augmentation()
 
     train_dataset = PreprocessedDRDataset(
-        cache_dir=CONFIG['cache_dir'],
-        labels_df=train_df_balanced,
-        mild_aug=mild_aug,
-        moderate_aug=moderate_aug,
-        strong_aug=strong_aug,
-        val_aug=val_aug,
-        is_train=True,
+        cache_dir=CONFIG['cache_dir'], labels_df=train_df_balanced,
+        mild_aug=mild_aug, moderate_aug=moderate_aug,
+        strong_aug=strong_aug, val_aug=val_aug, is_train=True,
     )
     val_dataset = PreprocessedDRDataset(
-        cache_dir=CONFIG['cache_dir'],
-        labels_df=val_df,
-        mild_aug=mild_aug,
-        moderate_aug=moderate_aug,
-        strong_aug=strong_aug,
-        val_aug=val_aug,
-        is_train=False,
+        cache_dir=CONFIG['cache_dir'], labels_df=val_df,
+        mild_aug=mild_aug, moderate_aug=moderate_aug,
+        strong_aug=strong_aug, val_aug=val_aug, is_train=False,
     )
 
     train_loader = DataLoader(
@@ -403,29 +389,31 @@ def main():
     )
 
     # ── Step 5: model ────────────────────────────────────────────────────────
-    print("\nStep 5: Initialising DenseNet121 with CORAL + Focal head...")
-    model = DenseNet121withCORALFocal_v2(
+    print("\nStep 5: Initialising DenseNet121 with independent CORAL projections...")
+    model = DenseNet121withCORALFocal_v5(
         num_classes=CONFIG['num_classes'],
         gamma=CONFIG['gamma'],
         pretrained=CONFIG['pretrained'],
-        label_smooth=CONFIG['label_smooth'],   # 0.0 — disabled
+        lambda_ord=CONFIG['lambda_ord'],
     ).to(CONFIG['device'])
 
-    freeze_early_layers(model, blocks=('denseblock1', 'denseblock2', 'denseblock3'))
+    # Freeze ONLY denseblock1 — denseblock2/3 must train for lesion features
+    freeze_early_layers(model, blocks=('denseblock1',))
 
     total_params     = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Total parameters:     {total_params:,}")
-    print(f"Trainable parameters: {trainable_params:,} "
+    print(f"Total parameters     : {total_params:,}")
+    print(f"Trainable parameters : {trainable_params:,} "
           f"({100*trainable_params/total_params:.1f}%)")
 
-    # CORAL alpha — computed on balanced df (NOTE: near-uniform, kept for
-    # consistency but WeightedRandomSampler is the real balancing mechanism)
-    print("\nComputing CORAL alpha weights...")
+    # ── Step 6: alpha on ORIGINAL labels (key fix) ───────────────────────────
+    # Pass train_df (before balancing) so alpha reflects true class imbalance.
+    # This gives meaningful weights ~[1.0, 1.07, 1.23, 1.25] for thresholds
+    # 0-3, pushing more gradient toward the G2/G3 and G3/G4 boundaries.
+    print("\nComputing CORAL alpha on ORIGINAL imbalanced labels...")
     model.compute_alpha(
-        torch.tensor(train_df_balanced['diagnosis'].values, dtype=torch.long)
+        torch.tensor(train_df['diagnosis'].values, dtype=torch.long)
     )
-    print("Alpha weights computed ✓")
 
     # ── Optimizer + OneCycleLR ───────────────────────────────────────────────
     optimizer = optim.Adam(
@@ -434,7 +422,7 @@ def main():
         weight_decay=CONFIG['weight_decay'],
     )
     total_steps = len(train_loader) * CONFIG['num_epochs']
-    scheduler = optim.lr_scheduler.OneCycleLR(
+    scheduler   = optim.lr_scheduler.OneCycleLR(
         optimizer,
         max_lr=CONFIG['learning_rate'],
         total_steps=total_steps,
@@ -443,7 +431,7 @@ def main():
         div_factor=25,
         final_div_factor=1e4,
     )
-    print(f"\nOneCycleLR: {total_steps} total steps, peak LR={CONFIG['learning_rate']:.1e}")
+    print(f"\nOneCycleLR: {total_steps} steps, peak LR={CONFIG['learning_rate']:.1e}")
 
     # ── Training loop ────────────────────────────────────────────────────────
     top_k   = TopKCheckpoints(k=CONFIG['top_k_checkpoints'], save_dir=CONFIG['output_dir'])
@@ -485,32 +473,33 @@ def main():
 
         top_k.update(val_qwk, epoch, model)
 
-    # ── FIX 6: CORAL bias diagnostic ─────────────────────────────────────────
-    bias = model.model.classifier.bias.data.cpu()
-    print(f"\nCORAL bias vector (should be monotonically decreasing):")
-    print(f"  {bias.tolist()}")
-    monotonic = all(bias[i] >= bias[i+1] for i in range(len(bias)-1))
-    print(f"  Monotonic: {'✓ YES' if monotonic else '✗ NO — predictions may be inconsistent'}")
+    # ── CORAL diagnostics ────────────────────────────────────────────────────
+    print(f"\nCORAL threshold diagnostics:")
+    biases = [layer.bias.data.item() for layer in model.model.classifier.fc]
+    print(f"  Per-threshold biases : {[round(b, 4) for b in biases]}")
+    monotonic = all(biases[k] >= biases[k+1] for k in range(len(biases)-1))
+    print(f"  Monotonic            : {'✓ YES' if monotonic else '✗ NO'}")
+    print(f"  Alpha weights        : "
+          f"{[round(a, 4) for a in model.model.classifier.alpha.tolist()]}")
 
-    # ── Post-training ensemble ────────────────────────────────────────────────
+    # ── Ensemble ─────────────────────────────────────────────────────────────
     print("\n" + "=" * 80)
     print("TRAINING COMPLETED")
     print("=" * 80)
     print(f"\nBest single-model QWK: {best_qwk:.4f} at Epoch {best_epoch+1}")
 
     best_ckpt_paths = top_k.best_paths()
-    ensemble_qwk = best_qwk
+    ensemble_qwk    = best_qwk
     if len(best_ckpt_paths) > 1:
         ensemble_qwk, ensemble_preds, ensemble_labels = ensemble_from_checkpoints(
             model, best_ckpt_paths, val_loader, CONFIG['device'],
         )
-        print(f"Single-model QWK: {best_qwk:.4f}")
-        print(f"Ensemble QWK:     {ensemble_qwk:.4f}  ({len(best_ckpt_paths)} models)")
+        print(f"Single-model QWK : {best_qwk:.4f}")
+        print(f"Ensemble QWK     : {ensemble_qwk:.4f}  ({len(best_ckpt_paths)} models)")
         final_preds  = ensemble_preds
         final_labels = ensemble_labels
     else:
         if best_preds is None:
-            # Fallback: model never beat QWK=0 — use last epoch's validation results
             _, _, _, best_preds, best_labels = validate(
                 model, val_loader, CONFIG['device'], use_tta=False,
             )
@@ -525,12 +514,11 @@ def main():
         output_dict=True,
     )
 
-    # Training curves
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
     axes[0].plot(history['train_loss'], label='Train', marker='o')
     axes[0].plot(history['val_loss'],   label='Val',   marker='s')
     axes[0].set_xlabel('Epoch'); axes[0].set_ylabel('Loss')
-    axes[0].set_title('CORAL + Focal Loss')
+    axes[0].set_title('CORAL + Focal Loss (v5)')
     axes[0].legend(); axes[0].grid(True, alpha=0.3)
 
     axes[1].plot(history['train_acc'], label='Train', marker='o')
@@ -551,7 +539,6 @@ def main():
     print("✓ Saved: training_curves.png")
     plt.close()
 
-    # Confusion matrix
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=['G0', 'G1', 'G2', 'G3', 'G4'],
@@ -563,7 +550,6 @@ def main():
     print("✓ Saved: confusion_matrix.png")
     plt.close()
 
-    # Classification report
     report_text = classification_report(
         final_labels, final_preds,
         target_names=['Grade 0', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4'],
@@ -572,32 +558,35 @@ def main():
         f.write(report_text)
     print("✓ Saved: classification_report.txt")
 
-    # Summary JSON
     summary = {
-        'model':            'DenseNet121 + CORAL + Focal (correct cache + grade-aware aug)',
-        'fixes_applied':    [
-            'cache_dir corrected to data/processed/hybrid_512',
-            'batch_size 16→8 for RTX 2050 at 512px',
-            'label_smooth 0.05→0.0 (conflicts with focal loss)',
-            'grade-aware aug: mild/moderate/strong per grade',
-            'Windows-safe checkpoint paths via pathlib',
+        'model':             'DenseNet121 + independent CORAL projections (v5)',
+        'changes_vs_v4': [
+            'independent per-threshold Linear projections (losses_v5/models_v5)',
+            'alpha computed on original imbalanced labels (not balanced)',
+            'ordinal consistency regularization lambda_ord=0.1',
+            'denseblock1 frozen ONLY (denseblock2/3 unfrozen)',
         ],
-        'best_epoch':       best_epoch + 1,
-        'best_qwk':         float(best_qwk),
-        'ensemble_qwk':     float(ensemble_qwk),
-        'coral_bias':       bias.tolist(),
-        'coral_monotonic':  monotonic,
-        'best_val_loss':    float(history['val_loss'][best_epoch]),
-        'best_val_acc':     float(history['val_acc'][best_epoch]),
-        'total_params':     int(total_params),
-        'trainable_params': int(trainable_params),
-        'config':           {k: str(v) if isinstance(v, Path) else v
-                             for k, v in CONFIG.items()},
+        'best_epoch':        best_epoch + 1,
+        'best_qwk':          float(best_qwk),
+        'ensemble_qwk':      float(ensemble_qwk),
+        'coral_biases':      [round(b, 4) for b in biases],
+        'coral_monotonic':   monotonic,
+        'alpha_weights':     [round(a, 4) for a in
+                              model.model.classifier.alpha.tolist()],
+        'best_val_loss':     float(history['val_loss'][best_epoch]),
+        'best_val_acc':      float(history['val_acc'][best_epoch]),
+        'total_params':      int(total_params),
+        'trainable_params':  int(trainable_params),
+        'config':            {k: str(v) if isinstance(v, Path) else v
+                              for k, v in CONFIG.items()},
         'per_class_metrics': {
             str(i): {
-                'precision': float(class_report.get(f'Grade {i}', {}).get('precision', 0.0)),
-                'recall':    float(class_report.get(f'Grade {i}', {}).get('recall',    0.0)),
-                'f1-score':  float(class_report.get(f'Grade {i}', {}).get('f1-score',  0.0)),
+                'precision': float(
+                    class_report.get(f'Grade {i}', {}).get('precision', 0.0)),
+                'recall':    float(
+                    class_report.get(f'Grade {i}', {}).get('recall', 0.0)),
+                'f1-score':  float(
+                    class_report.get(f'Grade {i}', {}).get('f1-score', 0.0)),
             } for i in range(5)
         },
     }
@@ -606,11 +595,11 @@ def main():
     print("✓ Saved: summary.json")
 
     print(f"\n{'='*80}\nALL RESULTS SAVED\n{'='*80}")
-    print(f"\n📁 Results: {CONFIG['output_dir']}/")
+    print(f"\n📁 Results : {CONFIG['output_dir']}/")
     print(f"\n🎯 Key Metrics:")
     print(f"  Best single-model QWK : {best_qwk:.4f}  (epoch {best_epoch+1})")
     print(f"  Ensemble QWK          : {ensemble_qwk:.4f}")
-    print(f"  CORAL bias monotonic  : {'✓' if monotonic else '✗'}")
+    print(f"  CORAL monotonic       : {'✓' if monotonic else '✗'}")
     for i in range(5):
         recall = class_report.get(f'Grade {i}', {}).get('recall', 0.0)
         print(f"  Grade {i} Recall       : {recall:.2%}")

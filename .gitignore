@@ -1,7 +1,7 @@
 # Large downloaded datasets and derived data
 data/raw/
 data/processed/
-
+data/preprocessed_hybrid/
 # Notebook caches
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
@@ -23,7 +23,4 @@ Thumbs.db
 
 # Model weight files
 *.pth
-
-# Preprocessed images (do not track heavy generated datasets)
-data/preprocessed_hybrid/
 
