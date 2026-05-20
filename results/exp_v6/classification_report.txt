@@ -1,0 +1,29 @@
+Classification Report -- exp_v6
+
+
+NOTE: 'support' = number of TRUE samples per class in the
+validation set (20% stratified split, random_state=42).
+It reflects the REAL-WORLD class imbalance and is fixed
+across experiments. Training augmentation is visible in
+the 'balanced_train_dist' field of summary.json.
+
+=
+
+                         precision    recall  f1-score   support
+
+        Grade 0 (No DR)       0.97      0.94      0.96       361
+         Grade 1 (Mild)       0.43      0.62      0.51        74
+     Grade 2 (Moderate)       0.77      0.61      0.68       200
+       Grade 3 (Severe)       0.32      0.64      0.43        39
+Grade 4 (Proliferative)       0.76      0.47      0.58        59
+
+               accuracy                           0.77       733
+              macro avg       0.65      0.66      0.63       733
+           weighted avg       0.81      0.77      0.78       733
+
+Validation class distribution:
+  Grade 0:   361 samples
+  Grade 1:    74 samples
+  Grade 2:   200 samples
+  Grade 3:    39 samples
+  Grade 4:    59 samples

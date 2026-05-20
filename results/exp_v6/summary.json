@@ -1,0 +1,49 @@
+{
+  "experiment": "exp_v6",
+  "checkpoints_used": [
+    "model_qwk0.8766_ep4.pth",
+    "model_qwk0.8506_ep10.pth",
+    "model_qwk0.8492_ep12.pth"
+  ],
+  "ensemble_qwk": 0.8816143960046734,
+  "best_model_path": "results\\exp_v6\\best_model.pth",
+  "val_dist": {
+    "0": 361,
+    "1": 74,
+    "2": 200,
+    "3": 39,
+    "4": 59
+  },
+  "per_class_metrics": {
+    "0": {
+      "precision": 0.9660056657223796,
+      "recall": 0.9445983379501385,
+      "f1-score": 0.9551820728291317,
+      "support": 361
+    },
+    "1": {
+      "precision": 0.42592592592592593,
+      "recall": 0.6216216216216216,
+      "f1-score": 0.5054945054945055,
+      "support": 74
+    },
+    "2": {
+      "precision": 0.7721518987341772,
+      "recall": 0.61,
+      "f1-score": 0.6815642458100558,
+      "support": 200
+    },
+    "3": {
+      "precision": 0.3246753246753247,
+      "recall": 0.6410256410256411,
+      "f1-score": 0.43103448275862066,
+      "support": 39
+    },
+    "4": {
+      "precision": 0.7567567567567568,
+      "recall": 0.4745762711864407,
+      "f1-score": 0.5833333333333334,
+      "support": 59
+    }
+  }
+}

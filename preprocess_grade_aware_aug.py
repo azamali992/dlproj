@@ -1,5 +1,5 @@
 """
-preprocess_v3.py — APTOS 2019 Blindness Detection preprocessing pipeline
+preprocess_v3.py -- APTOS 2019 Blindness Detection preprocessing pipeline
 =========================================================================
 
 Research-backed pipeline. Replaces v2 which had several bugs (wrong Ben
@@ -10,27 +10,27 @@ to preserve microaneurysms).
 Pipeline order (each step is documented with its source):
 
     raw RGB image
-        │
-        ▼
-    1. crop_fundus()        — remove black border around the retina
-        │                     (Biomedical & Pharmacology J., 2017;
-        │                      every APTOS paper does this first)
-        ▼
-    2. resize INTER_LANCZOS4 — preserves small lesion detail better
-        │                      than INTER_LINEAR (V5.2 working code)
-        ▼
-    3. ben_graham()         — Graham, Kaggle DR 2015 winner.
-        │                     `cv2.addWeighted(img,4,blur,-4,128)`
-        │                     Subtracts local mean colour, maps to mid grey.
-        │                     Macsik et al. (IET Image Proc., 2024);
-        │                     DR-NASNet (MDPI Diagnostics, 2023).
-        ▼
-    4. clahe_lab()          — CLAHE on L channel of CIELAB.
-        │                     Preserves colour, normalises perceived
-        │                     contrast. Macsik et al. 2024;
-        │                     filipmu Kaggle reference impl.
-        ▼
-    5. apply_circle_mask()  — zero out corners outside the FOV so the
+        |
+        v
+    1. crop_fundus()        -- remove black border around the retina
+        |                     (Biomedical & Pharmacology J., 2017;
+        |                      every APTOS paper does this first)
+        v
+    2. resize INTER_LANCZOS4 -- preserves small lesion detail better
+        |                      than INTER_LINEAR (V5.2 working code)
+        v
+    3. ben_graham()         -- Graham, Kaggle DR 2015 winner.
+        |                     `cv2.addWeighted(img,4,blur,-4,128)`
+        |                     Subtracts local mean colour, maps to mid grey.
+        |                     Macsik et al. (IET Image Proc., 2024);
+        |                     DR-NASNet (MDPI Diagnostics, 2023).
+        v
+    4. clahe_lab()          -- CLAHE on L channel of CIELAB.
+        |                     Preserves colour, normalises perceived
+        |                     contrast. Macsik et al. 2024;
+        |                     filipmu Kaggle reference impl.
+        v
+    5. apply_circle_mask()  -- zero out corners outside the FOV so the
                               network never sees border artefacts.
 
 This is the same pipeline as your friend's V5.2 (which reached raw QWK
@@ -91,7 +91,7 @@ from typing import Optional
 
 
 # ============================================================================
-#  DEFAULT PATHS — edit if your layout differs
+#  DEFAULT PATHS -- edit if your layout differs
 # ============================================================================
 
 DEFAULT_RAW_DIR        = 'data/raw/train_images'
@@ -116,7 +116,7 @@ def crop_fundus(img: np.ndarray, threshold: int = 7) -> np.ndarray:
     """
     Crop the black background around the circular retina.
 
-    Uses the green channel (which has the strongest fundus signal — see
+    Uses the green channel (which has the strongest fundus signal -- see
     Stage-Aware DR ordinal regression paper, arXiv 2511.14398, 2025) and
     finds the tight bounding box around pixels brighter than `threshold`.
 
@@ -135,6 +135,56 @@ def crop_fundus(img: np.ndarray, threshold: int = 7) -> np.ndarray:
     return img[r0:r1 + 1, c0:c1 + 1]
 
 
+def pad_to_square(arr: np.ndarray) -> np.ndarray:
+    """
+    Symmetrically pad the shorter axis so the array is square.
+
+    3-channel images: BORDER_REPLICATE -- the edge row/column of the fundus
+    is mirrored outward.  Ben Graham's Gaussian blur then sees a smooth
+    continuation of the dark camera vignetting rather than a sharp step to
+    black, which eliminates the bright halo that constant-black fill creates.
+    The replicated content is zeroed by the pixel-wise mask after all
+    contrast processing, so it never reaches the model.
+
+    2-D masks: zero fill -- padding area is always False (background).
+    """
+    h, w = arr.shape[:2]
+    if h == w:
+        return arr
+    pad = abs(h - w)
+    before = pad // 2
+    after  = pad - before
+    if arr.ndim == 3:
+        if h < w:
+            return cv2.copyMakeBorder(arr, before, after, 0, 0,
+                                      cv2.BORDER_REPLICATE)
+        else:
+            return cv2.copyMakeBorder(arr, 0, 0, before, after,
+                                      cv2.BORDER_REPLICATE)
+    else:   # 2-D mask -- always zero
+        canvas = np.zeros((max(h, w), max(h, w)), dtype=arr.dtype)
+        y0 = (max(h, w) - h) // 2
+        x0 = (max(h, w) - w) // 2
+        canvas[y0:y0 + h, x0:x0 + w] = arr
+        return canvas
+
+
+def make_fundus_mask(img: np.ndarray, threshold: int = 10) -> np.ndarray:
+    """
+    Pixel-wise boolean mask: True where the image has eye content.
+
+    Uses the maximum value across all three channels.  The camera background
+    is pure black (or very near-black from JPEG noise) in every channel, so
+    max_channel <= threshold reliably identifies non-fundus pixels.
+
+    This mask is computed on the raw cropped image (before any contrast
+    enhancement) so it reflects the original image boundaries exactly.
+    After padding and resizing it is applied to zero out everything that
+    was not part of the eye -- no geometric approximation, no forced circle.
+    """
+    return img.max(axis=2) > threshold
+
+
 def make_circle_mask(h: int, w: int) -> np.ndarray:
     """Boolean mask True inside the inscribed circle (the camera FOV)."""
     cy, cx = h / 2.0, w / 2.0
@@ -144,11 +194,34 @@ def make_circle_mask(h: int, w: int) -> np.ndarray:
 
 
 def apply_circle_mask(img: np.ndarray, fill: int = 0) -> np.ndarray:
-    """Zero out pixels outside the circular FOV. Removes corner artefacts."""
+    """Zero out pixels outside the circular FOV. Used in augmentation."""
     h, w = img.shape[:2]
     out = img.copy()
     out[~make_circle_mask(h, w)] = fill
     return out
+
+
+def apply_soft_circle_mask(img: np.ndarray,
+                            radius: float = None,
+                            feather: int = 20) -> np.ndarray:
+    """
+    Fade to black over `feather` pixels centred on `radius`.
+
+    When `radius` is set to the actual fundus circle radius (not the padded-
+    square inscribed circle), the feather zone sits exactly at the fundus
+    edge.  Everything inside fades smoothly like natural vignetting; the
+    Ben Graham halo just outside the fundus is fully masked.  No hard cut,
+    no visible ring.
+    """
+    h, w = img.shape[:2]
+    cy, cx = h / 2.0, w / 2.0
+    if radius is None:
+        radius = min(cy, cx) - 1
+    Y, X = np.ogrid[:h, :w]
+    dist = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2)
+    alpha = np.clip((radius - dist) / feather, 0.0, 1.0)
+    out = img.astype(np.float32) * alpha[:, :, np.newaxis]
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 def ben_graham(img: np.ndarray, sigmaX: int = 10) -> np.ndarray:
@@ -162,7 +235,7 @@ def ben_graham(img: np.ndarray, sigmaX: int = 10) -> np.ndarray:
     lesions (microaneurysms, hard exudates).
 
     Reference implementation: every paper in the lit review uses this exact
-    formula — see DR-NASNet (Diagnostics 2023), Macsik et al. (IET Image
+    formula -- see DR-NASNet (Diagnostics 2023), Macsik et al. (IET Image
     Processing 2024), Sensors 2023 (PMC10301863).
     """
     blurred = cv2.GaussianBlur(img, (0, 0), sigmaX)
@@ -177,7 +250,7 @@ def clahe_lab(img: np.ndarray, clip_limit: float = 2.0,
     Why LAB and not HSV/RGB:
     - L is perceptual lightness (roughly luminance), so CLAHE on L behaves
       like CLAHE on a grayscale image while a/b channels keep colour intact.
-    - CIELAB was designed so equal numerical changes ≈ equal perceived
+    - CIELAB was designed so equal numerical changes ~ equal perceived
       changes, making the contrast boost look natural rather than garish.
     - Per Macsik et al. (IET Image Processing, 2024), Lab-CLAHE was the
       single best-performing CLAHE variant on APTOS 2019 in their ensemble
@@ -190,24 +263,61 @@ def clahe_lab(img: np.ndarray, clip_limit: float = 2.0,
     return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2RGB)
 
 
+def clahe_hsv(img: np.ndarray, clip_limit: float = 2.0,
+              tile: int = 8) -> np.ndarray:
+    """
+    CLAHE on the V (value/brightness) channel of HSV colour space.
+
+    This is the preprocessing used in the original preprocessed_hybrid cache
+    that exp_v5 trained on.  It only changes brightness -- hue and saturation
+    are completely untouched -- which produces a uniform brown-grey appearance
+    without amplifying the warm orange colours at the fundus periphery that
+    LAB-CLAHE makes more vivid.
+    """
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+    h, s, v = cv2.split(hsv)
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(tile, tile))
+    v = clahe.apply(v)
+    return cv2.cvtColor(cv2.merge([h, s, v]), cv2.COLOR_HSV2RGB)
+
+
 def preprocess_full(img_bgr: np.ndarray, size: int = DEFAULT_IMAGE_SIZE,
                     sigmaX: int = 10, clahe_clip: float = 2.0) -> np.ndarray:
     """
-    The full pipeline:  crop → resize → Ben Graham → LAB-CLAHE → circle mask.
-    Returns RGB uint8 in (size, size, 3).
+    Full pipeline: crop -> Ben Graham -> pad-to-square -> resize -> LAB-CLAHE.
+
+    Ben Graham runs BEFORE pad_to_square so its Gaussian blur never sees the
+    black step-edge introduced by padding.  If Ben Graham ran after padding,
+    the blur would average fundus pixels with the zero-padded corners and
+    create bright halos at the fundus boundary.
+
+    No circle mask at the end: the natural camera vignetting already provides
+    a soft circular boundary.  A hard inscribed-circle cut is visually
+    artificial and misaligns when the fundus fills less than the full square.
     """
     img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     img = crop_fundus(img)
+
+    # Build pixel-wise mask from the raw cropped image before any
+    # contrast processing changes pixel values.
+    mask = make_fundus_mask(img)                         # (H, W) bool
+    mask = pad_to_square(mask)                           # same geometry as img
+    mask = cv2.resize(mask.astype(np.uint8), (size, size),
+                      interpolation=cv2.INTER_NEAREST).astype(bool)
+
+    img = pad_to_square(img)
     img = cv2.resize(img, (size, size), interpolation=cv2.INTER_LANCZOS4)
     img = ben_graham(img, sigmaX=sigmaX)
     img = np.clip(img, 0, 255).astype(np.uint8)
-    img = clahe_lab(img, clip_limit=clahe_clip)
-    img = apply_circle_mask(img)
+    img = clahe_hsv(img, clip_limit=clahe_clip)
+
+    # Zero out everything that was originally background.
+    img[~mask] = 0
     return img
 
 
 # ============================================================================
-#  PREPROCESSOR CLASSES — drop-in replacements for v2 classes
+#  PREPROCESSOR CLASSES -- drop-in replacements for v2 classes
 # ============================================================================
 
 class BenGrahamPreprocessor:
@@ -223,11 +333,18 @@ class BenGrahamPreprocessor:
             raise FileNotFoundError(f'cv2 failed to read: {image_path}')
         img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         img = crop_fundus(img)
+        mask = make_fundus_mask(img)
+        mask = pad_to_square(mask)
+        mask = cv2.resize(mask.astype(np.uint8), (self.image_size, self.image_size),
+                          interpolation=cv2.INTER_NEAREST).astype(bool)
+        img = pad_to_square(img)
         img = cv2.resize(img, (self.image_size, self.image_size),
                          interpolation=cv2.INTER_LANCZOS4)
         img = ben_graham(img, sigmaX=self.sigmaX)
         img = np.clip(img, 0, 255).astype(np.uint8)
-        return apply_circle_mask(img)
+        img = clahe_hsv(img, clip_limit=self.clip_limit if hasattr(self, 'clip_limit') else 2.0)
+        img[~mask] = 0
+        return img
 
 
 class CLAHEPreprocessor:
@@ -245,10 +362,16 @@ class CLAHEPreprocessor:
             raise FileNotFoundError(f'cv2 failed to read: {image_path}')
         img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         img = crop_fundus(img)
+        mask = make_fundus_mask(img)
+        mask = pad_to_square(mask)
+        mask = cv2.resize(mask.astype(np.uint8), (self.image_size, self.image_size),
+                          interpolation=cv2.INTER_NEAREST).astype(bool)
+        img = pad_to_square(img)
         img = cv2.resize(img, (self.image_size, self.image_size),
                          interpolation=cv2.INTER_LANCZOS4)
-        img = clahe_lab(img, clip_limit=self.clip_limit, tile=self.tile_size)
-        return apply_circle_mask(img)
+        img = clahe_hsv(img, clip_limit=self.clip_limit, tile=self.tile_size)
+        img[~mask] = 0
+        return img
 
 
 class HybridPreprocessor:
@@ -300,7 +423,7 @@ def _spatial_block(rotate_p: float = 0.8, scale: float = 0.10):
     """
     Geometric augmentations common to all training augs.
 
-    NB: written to be compatible with albumentations >= 2.0 — the
+    NB: written to be compatible with albumentations >= 2.0 -- the
     `value=` kwarg and `ShiftScaleRotate` are deprecated there. We use
     Affine (their replacement) and the new `fill=` kwarg.
     """
@@ -334,18 +457,18 @@ def get_train_augmentation_mild():
     Grade 0 and Grade 1 augmentation.
 
     WHY RESTRICTED:
-    Grade 1 is defined by microaneurysms ONLY — typically 1-5 red dots,
+    Grade 1 is defined by microaneurysms ONLY -- typically 1-5 red dots,
     3-6 px wide at 512px resolution. The previous 'strong' pipeline had
     three transforms that reliably destroyed this signal:
 
-        GaussianBlur(blur_limit=(3,7))  — a 7px blur erases a 5px dot.
-        MotionBlur(blur_limit=5)        — smears dots into undetectable streaks.
-        CoarseDropout(holes up to 20px) — with only 2-3 MAs in the image,
+        GaussianBlur(blur_limit=(3,7))  -- a 7px blur erases a 5px dot.
+        MotionBlur(blur_limit=5)        -- smears dots into undetectable streaks.
+        CoarseDropout(holes up to 20px) -- with only 2-3 MAs in the image,
                                           a single 20x20 hole covers the only
                                           diagnostic feature. The model then
                                           receives a Grade 1 label on an image
                                           visually identical to Grade 0.
-        HueSaturationValue(sat+-25)     — MAs are identified by red-on-orange
+        HueSaturationValue(sat+-25)     -- MAs are identified by red-on-orange
                                           contrast. +-25 saturation can collapse
                                           this contrast so the dot vanishes.
 
@@ -367,8 +490,8 @@ def get_train_augmentation_mild():
                                      sat_shift_limit=10,
                                      val_shift_limit=8, p=1.0),
             ], p=0.5),
-            # NO blur — erases microaneurysms (see rationale above).
-            # NO CoarseDropout — covers only diagnostic feature.
+            # NO blur -- erases microaneurysms (see rationale above).
+            # NO CoarseDropout -- covers only diagnostic feature.
             CircleMaskTransform(p=1.0),
         ] + _normalize_block()
     )
@@ -383,11 +506,11 @@ def get_train_augmentation_moderate():
     photometric jitter won't erase diagnostic signal, but blur and dropout
     can still remove isolated exudates.
 
-    - Geometry: full — spatial invariance helps without erasing lesions.
-    - Color jitter: moderate +-12 — enough variety, contrast preserved.
-    - Blur: REMOVED — haemorrhage boundaries matter for G2 vs G3 grading.
-    - Dropout: REMOVED — isolated hard exudates are diagnostically important.
-    - Sharpen: kept at low alpha — enhances rather than erases.
+    - Geometry: full -- spatial invariance helps without erasing lesions.
+    - Color jitter: moderate +-12 -- enough variety, contrast preserved.
+    - Blur: REMOVED -- haemorrhage boundaries matter for G2 vs G3 grading.
+    - Dropout: REMOVED -- isolated hard exudates are diagnostically important.
+    - Sharpen: kept at low alpha -- enhances rather than erases.
     """
     return A.Compose(
         _spatial_block(rotate_p=0.85, scale=0.08) + [
@@ -400,7 +523,7 @@ def get_train_augmentation_moderate():
                 A.RGBShift(r_shift_limit=8, g_shift_limit=8,
                            b_shift_limit=8, p=1.0),
             ], p=0.65),
-            # Sharpen only — makes haemorrhage edges crisper, never erases.
+            # Sharpen only -- makes haemorrhage edges crisper, never erases.
             A.Sharpen(alpha=(0.10, 0.25), p=0.25),
             CircleMaskTransform(p=1.0),
         ] + _normalize_block()
@@ -411,20 +534,19 @@ def get_train_augmentation_strong():
     """
     Grade 3 and Grade 4 augmentation.
 
-    Severe and Proliferative DR have extensive lesion coverage — large
+    Severe and Proliferative DR have extensive lesion coverage -- large
     haemorrhages, venous beading, new vessel formation. These lesions are
     large enough (tens of pixels) that conservative blur and small dropout
     cannot erase diagnostic signal.
 
-    Changes from the original strong aug:
-    - GaussianBlur capped at (3,3): 3px max kernel only.
-      Previously (3,7) — 7px softened haemorrhage boundaries enough to
-      shift G3/G4 decisions. 3px is clinically harmless.
-    - MotionBlur: REMOVED. Smears vessel patterns with no clinical analogue.
-    - CoarseDropout: max 12x12 holes (was 20x20), max 3 holes (was 6).
-      Safe at G3/G4 density; previous sizes were unnecessarily destructive.
-    - HueSaturationValue sat_shift: 15 (was 25). Enough for camera variation.
-    - RGBShift limits: 10 (was 15). Same reasoning.
+    Pipeline:
+    - Geometry: full (rotate up to 360, scale +/-10%, translate +/-2%, flips).
+    - Color: RandomBrightnessContrast +/-15 OR HueSaturationValue +/-10/15/12
+      OR RGBShift +/-10 (one of the three chosen randomly, p=0.70).
+    - Blur/Sharpen: GaussianBlur(3,3) OR Sharpen (one chosen, p=0.30).
+      3px kernel only -- cannot erase large G3/G4 lesions.
+    - No CoarseDropout -- removed because patches disrupt haemorrhage pattern
+      learning without a clear benefit at this dataset size.
     """
     return A.Compose(
         _spatial_block(rotate_p=0.9, scale=0.10) + [
@@ -438,20 +560,12 @@ def get_train_augmentation_strong():
                            b_shift_limit=10, p=1.0),
             ], p=0.70),
             A.OneOf([
-                # 3px max — softens noise, cannot erase G3/G4 lesions.
+                # 3px max -- softens noise, cannot erase G3/G4 lesions.
                 A.GaussianBlur(blur_limit=(3, 3), p=1.0),
                 # Sharpening enhances vessel/lesion boundaries.
                 A.Sharpen(alpha=(0.15, 0.35), p=1.0),
-                # MotionBlur intentionally excluded — no clinical analogue.
+                # MotionBlur intentionally excluded -- no clinical analogue.
             ], p=0.30),
-            # Smaller, fewer holes — safe for dense G3/G4 lesion fields.
-            A.CoarseDropout(
-                num_holes_range=(1, 3),
-                hole_height_range=(8, 12),
-                hole_width_range=(8, 12),
-                fill=0,
-                p=0.20,
-            ),
             CircleMaskTransform(p=1.0),
         ] + _normalize_block()
     )
@@ -463,7 +577,7 @@ def get_val_augmentation():
 
 
 # ============================================================================
-#  PREPROCESS-AND-CACHE  (data/raw  →  data/processed)
+#  PREPROCESS-AND-CACHE  (data/raw  ->  data/processed)
 # ============================================================================
 
 def preprocess_and_cache(raw_dir: str = DEFAULT_RAW_DIR,
@@ -587,7 +701,7 @@ def create_balanced_train_dataframe(train_df: pd.DataFrame,
         Grade 3 (Severe)       :  193
         Grade 4 (Proliferative):  295
 
-    target_per_class=1000 is a reasonable default — every class roughly
+    target_per_class=1000 is a reasonable default -- every class roughly
     matches the moderate count without exploding the dataset size.
     """
     if label_col not in train_df.columns:
@@ -632,13 +746,13 @@ def create_balanced_train_dataframe(train_df: pd.DataFrame,
     for grade, count in (balanced[label_col].value_counts()
                                             .sort_index().items()):
         print(f'  Grade {grade}: {count:5d}')
-    print(f'Total: {len(train_df)}  →  {len(balanced)}')
+    print(f'Total: {len(train_df)}  ->  {len(balanced)}')
     print('=' * 72)
     return balanced
 
 
 # ============================================================================
-#  VERIFICATION HELPERS — run these once to confirm the pipeline behaves
+#  VERIFICATION HELPERS -- run these once to confirm the pipeline behaves
 # ============================================================================
 
 def verify_preprocessing(raw_dir: str = DEFAULT_RAW_DIR,
@@ -687,57 +801,103 @@ def verify_preprocessing(raw_dir: str = DEFAULT_RAW_DIR,
 
 def verify_augmentation(cache_dir: str = DEFAULT_PROCESSED_DIR,
                         save_dir: Optional[str] = None,
+                        csv_path: Optional[str] = None,
                         n_samples: int = 4):
     """
-    Apply the strong training augmentation 4× to a single cached image.
-    Reports mean pixel diff (>3 means augmentation is firing) and
-    optionally writes the original + 4 augmented versions to disk.
+    Grade-aware augmentation verification.
 
-    REMINDER: cached files are NOT augmented — augmentation runs in
-    Dataset.__getitem__ at training time. To eyeball augmentation, this
-    function applies it manually and saves the result.
+    For each grade 0-4 picks one representative cached image, applies the
+    augmentation that grade actually receives in training (mild / moderate /
+    strong), and optionally saves the results to disk.
+
+    Reports mean pixel diff per grade (>3 means augmentation is active).
+
+    Args
+    ----
+    cache_dir  : directory of preprocessed PNG files
+    save_dir   : if given, writes original + n_samples augmented PNGs per grade
+                 into <save_dir>/grade_<N>_<strength>/
+    csv_path   : path to train.csv (id_code, diagnosis). Required when save_dir
+                 is set so the function can find one image per grade.
+    n_samples  : how many augmented versions to save per grade
     """
     files = list(Path(cache_dir).glob('*.png'))
     if not files:
         print(f'No PNGs found in {cache_dir}')
         return
 
-    aug = get_train_augmentation_strong()
-    img_path = files[0]
-    original = cv2.cvtColor(cv2.imread(str(img_path)), cv2.COLOR_BGR2RGB)
+    grade_to_aug = {
+        0: ('mild',     get_train_augmentation_mild()),
+        1: ('mild',     get_train_augmentation_mild()),
+        2: ('moderate', get_train_augmentation_moderate()),
+        3: ('strong',   get_train_augmentation_strong()),
+        4: ('strong',   get_train_augmentation_strong()),
+    }
 
-    print(f'Augmentation check on: {img_path.name}')
-    print(f'  original mean={original.mean():.1f}  std={original.std():.1f}')
+    # Build id->grade map if csv is available
+    id_to_grade: dict = {}
+    if csv_path and os.path.exists(csv_path):
+        df = pd.read_csv(csv_path)
+        df.columns = [c.strip().lower() for c in df.columns]
+        if 'id_code' in df.columns and 'diagnosis' in df.columns:
+            id_to_grade = dict(zip(df['id_code'].astype(str),
+                                   df['diagnosis'].astype(int)))
 
-    diffs = []
-    for k in range(8):
-        out = aug(image=original)['image']
-        # `out` is now a torch.Tensor (C,H,W) normalized — convert back to
-        # uint8 image space for diff comparison.
-        out_np = out.permute(1, 2, 0).cpu().numpy()
-        out_np = (out_np * np.array(IMAGENET_STD) + np.array(IMAGENET_MEAN))
-        out_np = np.clip(out_np * 255, 0, 255).astype(np.uint8)
-        d = np.abs(original.astype(float) - out_np.astype(float)).mean()
-        diffs.append(d)
-        print(f'  aug {k+1}: mean pixel diff = {d:.2f}')
+    # Group cached files by grade (fallback: grade unknown -> use strong aug)
+    grade_to_files: dict = {g: [] for g in range(5)}
+    unknown_files: list = []
+    for f in files:
+        stem = f.stem
+        if stem in id_to_grade:
+            grade_to_files[id_to_grade[stem]].append(f)
+        else:
+            unknown_files.append(f)
 
-    avg = np.mean(diffs)
-    print(f'  AVERAGE diff = {avg:.2f}')
-    print('  ✓ augmentation is active' if avg > 3.0
-          else '  ✗ WARNING: augmentation appears inactive')
+    print('=' * 60)
+    print('Grade-aware augmentation verification')
+    print('=' * 60)
 
-    if save_dir:
-        os.makedirs(save_dir, exist_ok=True)
-        cv2.imwrite(os.path.join(save_dir, 'original.png'),
-                    cv2.cvtColor(original, cv2.COLOR_RGB2BGR))
-        for k in range(min(n_samples, 4)):
-            t = aug(image=original)['image']
-            arr = t.permute(1, 2, 0).cpu().numpy()
-            arr = (arr * np.array(IMAGENET_STD) + np.array(IMAGENET_MEAN))
-            arr = np.clip(arr * 255, 0, 255).astype(np.uint8)
-            cv2.imwrite(os.path.join(save_dir, f'aug_{k+1}.png'),
-                        cv2.cvtColor(arr, cv2.COLOR_RGB2BGR))
-        print(f'  examples written to {save_dir}/')
+    for grade in range(5):
+        strength, aug = grade_to_aug[grade]
+        candidates = grade_to_files[grade] or unknown_files
+        if not candidates:
+            print(f'Grade {grade}: no cached image found, skipping')
+            continue
+
+        img_path = candidates[0]
+        original = cv2.cvtColor(cv2.imread(str(img_path)), cv2.COLOR_BGR2RGB)
+
+        print(f'\nGrade {grade} ({strength} aug)  --  {img_path.name}')
+        print(f'  original: mean={original.mean():.1f}  std={original.std():.1f}')
+
+        diffs = []
+        for k in range(8):
+            out = aug(image=original)['image']
+            out_np = out.permute(1, 2, 0).cpu().numpy()
+            out_np = (out_np * np.array(IMAGENET_STD) + np.array(IMAGENET_MEAN))
+            out_np = np.clip(out_np * 255, 0, 255).astype(np.uint8)
+            d = np.abs(original.astype(float) - out_np.astype(float)).mean()
+            diffs.append(d)
+
+        avg = np.mean(diffs)
+        print(f'  mean pixel diff (8 runs): {avg:.2f}  '
+              + ('ok active' if avg > 3.0 else 'FAIL WARNING inactive'))
+
+        if save_dir:
+            grade_dir = os.path.join(save_dir, f'grade_{grade}_{strength}')
+            os.makedirs(grade_dir, exist_ok=True)
+            cv2.imwrite(os.path.join(grade_dir, 'original.png'),
+                        cv2.cvtColor(original, cv2.COLOR_RGB2BGR))
+            for k in range(n_samples):
+                t = aug(image=original)['image']
+                arr = t.permute(1, 2, 0).cpu().numpy()
+                arr = (arr * np.array(IMAGENET_STD) + np.array(IMAGENET_MEAN))
+                arr = np.clip(arr * 255, 0, 255).astype(np.uint8)
+                cv2.imwrite(os.path.join(grade_dir, f'aug_{k+1}.png'),
+                            cv2.cvtColor(arr, cv2.COLOR_RGB2BGR))
+            print(f'  saved to {grade_dir}/')
+
+    print('\n' + '=' * 60)
 
 
 # ============================================================================
@@ -747,7 +907,7 @@ def verify_augmentation(cache_dir: str = DEFAULT_PROCESSED_DIR,
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(
-        description='APTOS 2019 preprocessing — data/raw → data/processed')
+        description='APTOS 2019 preprocessing -- data/raw -> data/processed')
     parser.add_argument('--raw-dir',   default=DEFAULT_RAW_DIR)
     parser.add_argument('--csv',       default=DEFAULT_RAW_CSV)
     parser.add_argument('--cache-dir', default=DEFAULT_PROCESSED_DIR)
@@ -775,7 +935,7 @@ if __name__ == '__main__':
         bal = create_balanced_train_dataframe(
             df, strategy='oversample', target_per_class=args.target)
         bal.to_csv(DEFAULT_BALANCED_CSV, index=False)
-        print(f'Balanced CSV → {DEFAULT_BALANCED_CSV}')
+        print(f'Balanced CSV -> {DEFAULT_BALANCED_CSV}')
 
     if args.verify:
         verify_preprocessing(args.raw_dir, args.cache_dir,

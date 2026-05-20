@@ -1,0 +1,9 @@
+Experiment: Exp3: EfficientNet-B0 + CE
+Model: EfficientNet-B0 (pretrained)
+Loss: CrossEntropyLoss
+Preprocessing: Resize+Normalize
+Augmentation: None
+Image Size: 224
+Batch Size: 16
+LR: 0.0001
+Best QWK: 0.8771

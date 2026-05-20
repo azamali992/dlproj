@@ -2,6 +2,7 @@
 data/raw/
 data/processed/
 data/preprocessed_hybrid/
+data/
 # Notebook caches
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
