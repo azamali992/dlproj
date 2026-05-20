@@ -228,11 +228,12 @@ def ensemble_from_checkpoints(model, ckpt_paths, loader, device):
                                          weights_only=True))
         model.eval()
         batch_probs = []
+        collect = not all_labels          # True only on first checkpoint pass
         with torch.no_grad():
             for images, labels in loader:
                 probs = torch.sigmoid(model(images.to(device))).cpu()
                 batch_probs.append(probs)
-                if not all_labels:
+                if collect:
                     all_labels.extend(labels.numpy())
         ep = torch.cat(batch_probs)
         all_probs = ep if all_probs is None else all_probs + ep
@@ -646,7 +647,9 @@ def main():
             ax.plot(history[k], label=k.replace('_', ' '), marker='o', ms=3)
         if ylabel == 'QWK':
             ax.axhline(best_qwk, color='r', ls='--',
-                       label=f'best {best_qwk:.4f}')
+                       label=f'best single {best_qwk:.4f}')
+            ax.axhline(ensemble_qwk, color='purple', ls='-.',
+                       label=f'ensemble {ensemble_qwk:.4f}')
         ax.set_xlabel('Epoch'); ax.set_ylabel(ylabel)
         ax.legend(); ax.grid(True, alpha=0.3)
     plt.tight_layout()
